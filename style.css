@@ -44,15 +44,70 @@ input { width: 100%; padding: 12px; background: #2c2c2c; border: 1px solid #444;
 .msg-name { font-size: 11px; color: #ddd; opacity: 0.7; display: block; margin-bottom: 2px; font-weight: bold; }
 .msg-edited { font-size: 10px; opacity: 0.6; float: right; margin-left: 5px; margin-top: 5px; }
 
-/* Медиа в чате (ограничение размера) */
-.message img, .message video { max-width: 100%; max-height: 300px; border-radius: 8px; margin-top: 5px; display: block; cursor: pointer; object-fit: contain; }
+/* ИСПРАВЛЕНО: Медиа */
+.message img, .message video { 
+    max-width: 100%; 
+    height: auto; 
+    max-height: 300px; /* Ограничение высоты */
+    border-radius: 8px; 
+    margin-top: 5px; 
+    display: block; 
+    cursor: pointer; 
+    object-fit: contain; /* Чтобы картинка не обрезалась */
+    background: #000;
+}
 
-.file-card { display: flex; align-items: center; gap: 12px; background: rgba(0,0,0,0.2); padding: 10px; border-radius: 8px; text-decoration: none; color: #fff; margin-top: 5px; min-width: 200px; transition: 0.2s; }
-.file-card:hover { background: rgba(0,0,0,0.3); }
-.file-icon { font-size: 28px; color: #fff; background: rgba(255,255,255,0.1); width: 40px; height: 40px; border-radius: 50%; display: flex; align-items: center; justify-content: center; }
-.file-info { display: flex; flex-direction: column; overflow: hidden; }
-.file-name { font-weight: bold; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 180px; }
-.file-meta { font-size: 11px; color: #ddd; margin-top: 2px; }
+/* ИСПРАВЛЕНО: Карточка файла */
+/* Используем класс .file-card-box чтобы отвязаться от стилей ссылок */
+.file-card-box { 
+    display: flex; 
+    align-items: center; 
+    gap: 12px; 
+    background: #2a2a2a; 
+    padding: 12px; 
+    border-radius: 8px; 
+    margin-top: 5px; 
+    min-width: 220px; 
+    border: 1px solid #3c3c3c; 
+}
+.file-icon { 
+    font-size: 24px; 
+    color: var(--primary); 
+    background: rgba(0, 136, 204, 0.1); 
+    width: 45px; 
+    height: 45px; 
+    border-radius: 50%; 
+    display: flex; 
+    align-items: center; 
+    justify-content: center;
+    flex-shrink: 0;
+}
+.file-info { 
+    display: flex; 
+    flex-direction: column; 
+    overflow: hidden; 
+    flex: 1; 
+}
+.file-name { 
+    font-weight: bold; 
+    font-size: 13px; 
+    white-space: nowrap; 
+    overflow: hidden; 
+    text-overflow: ellipsis; 
+    color: #fff;
+}
+.file-meta { 
+    font-size: 11px; 
+    color: #888; 
+    margin-top: 2px; 
+}
+.file-download-btn {
+    color: var(--primary);
+    text-decoration: none;
+    font-size: 18px;
+    padding: 5px;
+}
+.file-download-btn:hover { color: #fff; }
 
 .input-container { background: var(--sidebar); display: flex; flex-direction: column; position: relative; }
 .input-area { padding: 10px 20px; display: flex; align-items: center; gap: 10px; position: relative; }
@@ -64,7 +119,6 @@ textarea { flex: 1; background: #2c2c2c; border: none; color: #fff; padding: 10p
 .input-area button { background: transparent; border: none; color: #aaa; font-size: 20px; cursor: pointer; padding: 5px; }
 .input-area .send-btn { color: var(--primary); font-size: 18px; }
 
-/* Emoji Picker 2.0 */
 .emoji-picker { position: absolute; bottom: 65px; left: 20px; background: #333; border-radius: 8px; padding: 0; display: flex; flex-direction: column; z-index: 10; box-shadow: 0 5px 15px rgba(0,0,0,0.5); width: 300px; height: 350px; overflow: hidden; }
 .emoji-search { padding: 8px; border-bottom: 1px solid #444; }
 .emoji-search input { margin: 0; padding: 5px; border-radius: 4px; font-size: 12px; }
@@ -75,14 +129,12 @@ textarea { flex: 1; background: #2c2c2c; border: none; color: #fff; padding: 10p
 .emoji-list span { cursor: pointer; font-size: 24px; text-align: center; border-radius: 4px; padding: 5px; }
 .emoji-list span:hover { background: #444; }
 
-/* Auto-suggestions */
 .emoji-suggestions { position: absolute; bottom: 100%; left: 60px; background: #333; border-radius: 8px; padding: 5px; display: none; gap: 5px; box-shadow: 0 5px 15px rgba(0,0,0,0.5); z-index: 20; }
 .emoji-suggestions span { font-size: 24px; cursor: pointer; padding: 5px; border-radius: 5px; }
 .emoji-suggestions span:hover { background: #444; }
 
-/* Context Menu */
-.context-menu { position: fixed; background: #333; border-radius: 6px; box-shadow: 0 2px 10px rgba(0,0,0,0.5); display: none; z-index: 1000; overflow: hidden; }
-.context-menu div { padding: 10px 20px; cursor: pointer; font-size: 14px; }
+.context-menu { position: fixed; background: #333; border-radius: 6px; box-shadow: 0 2px 10px rgba(0,0,0,0.5); display: none; z-index: 1000; overflow: hidden; border: 1px solid #444; }
+.context-menu div { padding: 10px 20px; cursor: pointer; font-size: 14px; color: #fff; }
 .context-menu div:hover { background: #444; }
 
 .modal { display: none; position: fixed; top:0; left:0; width:100%; height:100%; background: rgba(0,0,0,0.8); z-index: 100; justify-content: center; align-items: center; }
