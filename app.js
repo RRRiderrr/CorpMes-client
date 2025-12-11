@@ -9,7 +9,6 @@ let incomingCallData = null;
 let editingMessageId = null;
 let selectedMessageId = null;
 
-// --- EMOJI & KEYWORDS DATA ---
 const emojiData = {
     "Smileys": ["😀","😃","😄","😁","😆","😅","🤣","😂","🙂","🙃","😉","😊","😇","🥰","😍","🤩","😘","😗","😙","😋","😛","😜","🤪","😝","🤑","🤗","🤭","🤫","🤔","🤐","🤨","😐","😑","😶","😏","😒","🙄","😬","🤥","😌","😔","😪","🤤","😴","😷","🤒","🤕","🤢","🤮","🤧","🥵","🥶","🥴","😵","🤯","🤠","🥳","😎","🤓","🧐","😕","🙁","😮","😯","😲","😳","🥺","😦","😧","😨","😰","😥","😢","😭","😱","😖","😣","😞","😓","😩","😫","🥱","😤","😡","😠","🤬","😈","👿","💀","☠️","💩","🤡","👹","👺","👻","👽","👾","🤖"],
     "Body": ["👋","🤚","🖐","✋","🖖","👌","🤏","✌️","🤞","🤟","🤘","🤙","👈","👉","👆","🖕","👇","☝️","👍","👎","✊","👊","🤛","🤜","👏","🙌","👐","🤲","🤝","🙏","✍️","💅","🤳","💪","🦵","🦶","👂","🦻","👃","🧠","🦷","🦴","👀","👁","👅","👄","💋","🩸"],
@@ -38,7 +37,6 @@ document.addEventListener('DOMContentLoaded', () => {
     initEmojiPicker();
 });
 
-// --- UI HELPERS ---
 window.switchTab = (tab) => {
     document.querySelectorAll('form').forEach(f => f.style.display = 'none');
     document.getElementById(tab === 'login' ? 'login-form' : 'register-form').style.display = 'block';
@@ -70,48 +68,39 @@ function initEmojiPicker() {
     for (const cat in emojiData) {
         const tab = document.createElement('div');
         tab.className = 'emoji-tab' + (first ? ' active' : '');
-        tab.textContent = emojiData[cat][0]; // Первый эмодзи как иконка таба
+        tab.textContent = emojiData[cat][0];
         tab.onclick = () => switchEmojiTab(cat, tab);
         tabsContainer.appendChild(tab);
         if(first) { switchEmojiTab(cat, tab); first = false; }
     }
 }
-
 function switchEmojiTab(cat, tabEl) {
     document.querySelectorAll('.emoji-tab').forEach(t => t.classList.remove('active'));
     tabEl.classList.add('active');
     renderEmojis(emojiData[cat]);
 }
-
 function renderEmojis(list) {
     const cont = document.getElementById('emoji-list');
     cont.innerHTML = list.map(e => `<span onclick="addEmoji('${e}')">${e}</span>`).join('');
 }
-
 window.filterEmojis = (val) => {
     if(!val) return switchEmojiTab("Smileys", document.querySelector('.emoji-tab'));
-    // Простой поиск по всем категориям (только если эмодзи совпадает, т.к. имен нет)
-    // Для MVP просто сбрасываем на Smileys
 };
-
 window.toggleEmoji = () => {
     const el = document.getElementById('emoji-picker');
     el.style.display = el.style.display === 'none' ? 'flex' : 'none';
 };
-
 window.addEmoji = (e) => {
     const input = document.getElementById('message-input');
     input.value += e;
     input.focus();
     document.getElementById('emoji-suggestions').style.display = 'none';
 };
-
 window.handleInput = (e) => {
     const val = e.target.value;
     const words = val.split(' ');
     const lastWord = words[words.length - 1].toLowerCase().replace(/[.,!?;:]/g, "");
     const sugg = document.getElementById('emoji-suggestions');
-    
     if (keywordMap[lastWord]) {
         sugg.innerHTML = keywordMap[lastWord].map(em => `<span onclick="addSuggestion('${em}')">${em}</span>`).join('');
         sugg.style.display = 'flex';
@@ -119,15 +108,9 @@ window.handleInput = (e) => {
         sugg.style.display = 'none';
     }
 };
-
 window.addSuggestion = (em) => {
     const input = document.getElementById('message-input');
-    const words = input.value.split(' ');
-    words.pop(); // Удаляем ключевое слово или добавляем после него
-    // Логика: добавляем эмодзи после слова
-    // Вернем слово + эмодзи
-    // Или просто добавим эмодзи
-    input.value = input.value + " " + em + " ";
+    input.value += em + " ";
     document.getElementById('emoji-suggestions').style.display = 'none';
     input.focus();
 };
@@ -177,7 +160,7 @@ function previewAvatar(event) {
     }
 }
 
-// --- SOCKET & CHAT ---
+// --- SOCKET ---
 function connectToServer() {
     document.getElementById('auth-screen').classList.remove('active');
     document.getElementById('main-screen').classList.add('active');
@@ -188,7 +171,6 @@ function connectToServer() {
 
     socket = io(serverUrl);
     socket.on('connect', () => socket.emit('authenticate', currentUser.id));
-
     socket.on('sidebar_update', (chats) => { sidebarChats = chats; renderSidebar(); });
     socket.on('search_results', (users) => renderSidebar(users, true));
 
@@ -222,7 +204,6 @@ function connectToServer() {
         scrollToBottom();
     });
 
-    // Calls
     socket.on('call_incoming', (data) => {
         if(currentPeer || incomingCallData) { socket.emit('call_busy'); return; }
         incomingCallData = data;
@@ -232,7 +213,6 @@ function connectToServer() {
     socket.on('call_accepted', (signal) => { if(currentPeer) currentPeer.signal(signal); });
     socket.on('call_busy', () => { alert("Абонент занят"); endCallUI(); });
     socket.on('call_ended', () => { endCallUI(); });
-
     socket.on('all_users_list', (users) => {
         const list = document.getElementById('group-candidates-list');
         list.innerHTML = '';
@@ -298,18 +278,42 @@ function renderMessage(msg) {
     const isMe = sender === currentUser.id;
     div.className = `message ${isMe ? 'sent' : 'received'}`;
     div.dataset.id = msg.id;
-    div.dataset.content = msg.content; 
+    div.dataset.content = msg.content;
     
-    if(isMe) {
-        div.oncontextmenu = (e) => {
-            e.preventDefault();
-            selectedMessageId = msg.id;
-            const menu = document.getElementById('context-menu');
-            menu.style.display = 'block';
-            menu.style.left = e.pageX + 'px';
-            menu.style.top = e.pageY + 'px';
-        };
-    }
+    // ВАЖНО: Разрешаем контекстное меню на ВСЕХ сообщениях
+    // Фильтруем пункты меню внутри обработчика
+    div.oncontextmenu = (e) => {
+        e.preventDefault();
+        selectedMessageId = msg.id;
+        const menu = document.getElementById('context-menu');
+        
+        let canEdit = isMe && msg.type === 'text';
+        let canDelete = false;
+
+        // Логика прав удаления
+        if (isMe) {
+            canDelete = true;
+        } else {
+            // Чужое сообщение
+            if (currentChat.type === 'user') {
+                canDelete = true; // В ЛС можно удалять всё
+            } else if (currentChat.type === 'group' && currentChat.creator_id === currentUser.id) {
+                canDelete = true; // Админ группы может удалять всё
+            }
+        }
+
+        const editBtn = menu.querySelector('div:first-child');
+        editBtn.style.display = canEdit ? 'block' : 'none';
+        
+        const delBtn = menu.querySelector('div:last-child');
+        delBtn.style.display = canDelete ? 'block' : 'none';
+
+        if(editBtn.style.display === 'none' && delBtn.style.display === 'none') return;
+
+        menu.style.display = 'block';
+        menu.style.left = e.pageX + 'px';
+        menu.style.top = e.pageY + 'px';
+    };
 
     let html = '';
     if (msg.group_id && !isMe) html += `<span class="msg-name">${msg.senderName || 'User'}</span>`;
@@ -321,7 +325,15 @@ function renderMessage(msg) {
     } else {
         const fileName = msg.file_name || 'Файл';
         const fileSize = msg.file_size ? formatBytes(msg.file_size) : '';
-        html += `<a href="${serverUrl + msg.file_url}" target="_blank" class="file-card"><div class="file-icon"><i class="fas fa-file"></i></div><div class="file-info"><span class="file-name">${fileName}</span><span class="file-meta">${fileSize}</span></div></a>`;
+        html += `
+            <div class="file-card-box">
+                <div class="file-icon"><i class="fas fa-file"></i></div>
+                <div class="file-info">
+                    <span class="file-name">${fileName}</span>
+                    <span class="file-meta">${fileSize}</span>
+                </div>
+                <a href="${serverUrl + msg.file_url}" target="_blank" class="file-download-btn"><i class="fas fa-download"></i></a>
+            </div>`;
     }
     div.innerHTML = html;
     document.getElementById('messages-container').appendChild(div);
@@ -330,7 +342,6 @@ function renderMessage(msg) {
 
 function scrollToBottom() { const c = document.getElementById('messages-container'); c.scrollTop = c.scrollHeight; }
 
-// --- EDIT & DELETE & INPUT ---
 document.onclick = () => document.getElementById('context-menu').style.display = 'none';
 
 window.initEditMessage = () => {
@@ -414,7 +425,7 @@ function emitMsg(content, type, url, fileName, fileSize) {
     });
 }
 
-// --- CALLS LOGIC (Fixed Audio & Devices) ---
+// --- CALLS ---
 window.startCall = () => {
     if(currentChat.type === 'group') return alert("Звонки только тет-а-тет");
     navigator.mediaDevices.getUserMedia({ audio: true, video: false }).then(stream => {
@@ -424,7 +435,7 @@ window.startCall = () => {
         currentPeer.on('stream', rs => {
             const v = document.getElementById('remote-video');
             v.srcObject = rs;
-            v.muted = false; // ВАЖНО для слышимости
+            v.muted = false; 
         });
     }).catch(e => alert("Нет доступа к микрофону"));
 };
@@ -438,7 +449,7 @@ window.acceptCall = () => {
         currentPeer.on('stream', rs => {
             const v = document.getElementById('remote-video');
             v.srcObject = rs;
-            v.muted = false; // ВАЖНО
+            v.muted = false; 
         });
         currentPeer.signal(incomingCallData.signal);
     }).catch(e => alert("Ошибка: " + e));
@@ -454,7 +465,7 @@ async function setupCallUI(stream) {
     localStream = stream;
     document.getElementById('active-call-modal').style.display = 'flex';
     document.getElementById('local-video').srcObject = stream;
-    await loadDevices(); // Загружаем устройства ТОЛЬКО ПОСЛЕ получения доступа
+    setTimeout(loadDevices, 500); 
 }
 
 async function loadDevices() {
@@ -472,7 +483,6 @@ async function loadDevices() {
             if(d.kind === 'videoinput') vid.appendChild(opt);
         });
 
-        // Restore preferences
         const savedAud = localStorage.getItem('pref_audio');
         const savedVid = localStorage.getItem('pref_video');
         if(savedAud) aud.value = savedAud;
@@ -541,7 +551,6 @@ window.endCall = () => {
     document.getElementById('incoming-call-modal').style.display = 'none';
 };
 
-// --- MISC ---
 window.openCreateGroupModal = () => { document.getElementById('create-group-modal').style.display = 'flex'; socket.emit('get_all_users_for_group'); };
 window.createGroup = () => {
     const name = document.getElementById('new-group-name').value;
