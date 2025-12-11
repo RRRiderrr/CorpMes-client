@@ -7,6 +7,16 @@ let localStream = null;
 let currentPeer = null;
 let incomingCallData = null;
 
+// Хелпер для формата размера файла
+function formatBytes(bytes, decimals = 2) {
+    if (!+bytes) return '0 B';
+    const k = 1024;
+    const dm = decimals < 0 ? 0 : decimals;
+    const sizes = ['B', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return `${parseFloat((bytes / Math.pow(k, i)).toFixed(dm))} ${sizes[i]}`;
+}
+
 document.addEventListener('DOMContentLoaded', () => {
     if(serverUrl) document.getElementById('server-url').value = serverUrl;
     const savedUser = localStorage.getItem('user');
@@ -215,15 +225,18 @@ function renderMessage(msg) {
     if(msg.type === 'text') {
         html += msg.content.replace(/\n/g, '<br>');
     } else if(msg.type === 'image') {
-        html += `<img src="${serverUrl + msg.file_url}" style="max-width:100%; border-radius:8px; cursor:pointer;" onclick="window.open('${serverUrl + msg.file_url}')">`;
+        // Картинка с ограничением ширины
+        html += `<img src="${serverUrl + msg.file_url}" onclick="window.open('${serverUrl + msg.file_url}')">`;
     } else {
+        // Карточка файла с размером и именем
         const fileName = msg.file_name || 'Файл';
+        const fileSize = msg.file_size ? formatBytes(msg.file_size) : '';
         html += `
             <a href="${serverUrl + msg.file_url}" target="_blank" class="file-card">
-                <i class="fas fa-file-arrow-down file-icon"></i>
+                <div class="file-icon"><i class="fas fa-file"></i></div>
                 <div class="file-info">
                     <span class="file-name">${fileName}</span>
-                    <span class="file-download">Скачать</span>
+                    <span class="file-meta">${fileSize}</span>
                 </div>
             </a>`;
     }
@@ -261,7 +274,7 @@ window.sendMessage = async () => {
             const res = await fetch(`${serverUrl}/api/upload`, { method:'POST', body:fd });
             fileData = await res.json();
             const type = fileInput.files[0].type.startsWith('image/') ? 'image' : 'file';
-            emitMsg(null, type, fileData.url, fileData.originalName);
+            emitMsg(null, type, fileData.url, fileData.originalName, fileData.size);
             window.clearFileSelection();
         } catch(e) {
             console.error(e);
@@ -270,18 +283,18 @@ window.sendMessage = async () => {
     }
 
     if(txt) { 
-        emitMsg(txt, 'text', null, null); 
+        emitMsg(txt, 'text', null, null, null); 
         input.value = ''; 
     }
     document.getElementById('emoji-picker').style.display = 'none';
 };
 
-function emitMsg(content, type, url, fileName) {
+function emitMsg(content, type, url, fileName, fileSize) {
     socket.emit('send_message', {
         senderId: currentUser.id,
         receiverId: currentChat.type === 'user' ? currentChat.id : null,
         groupId: currentChat.type === 'group' ? currentChat.id : null,
-        content, type, fileUrl: url, fileName: fileName, senderName: currentUser.nickname
+        content, type, fileUrl: url, fileName: fileName, fileSize: fileSize, senderName: currentUser.nickname
     });
 }
 
@@ -292,7 +305,11 @@ window.startCall = () => {
         setupCallUI(stream);
         currentPeer = new SimplePeer({ initiator: true, trickle: false, stream });
         currentPeer.on('signal', data => socket.emit('call_user', { userToCall: currentChat.id, signalData: data, from: currentUser.id, name: currentUser.nickname }));
-        currentPeer.on('stream', rs => document.getElementById('remote-video').srcObject = rs);
+        currentPeer.on('stream', rs => {
+            const video = document.getElementById('remote-video');
+            video.srcObject = rs;
+            video.volume = 1.0; // Включаем звук принудительно
+        });
     }).catch(e => alert("Нет доступа к микрофону"));
 };
 
@@ -302,7 +319,11 @@ window.acceptCall = () => {
         setupCallUI(stream);
         currentPeer = new SimplePeer({ initiator: false, trickle: false, stream });
         currentPeer.on('signal', data => socket.emit('answer_call', { signal: data, to: incomingCallData.from }));
-        currentPeer.on('stream', rs => document.getElementById('remote-video').srcObject = rs);
+        currentPeer.on('stream', rs => {
+            const video = document.getElementById('remote-video');
+            video.srcObject = rs;
+            video.volume = 1.0;
+        });
         currentPeer.signal(incomingCallData.signal);
     }).catch(e => alert("Ошибка: " + e));
 };
@@ -317,7 +338,6 @@ async function setupCallUI(stream) {
     localStream = stream;
     document.getElementById('active-call-modal').style.display = 'flex';
     document.getElementById('local-video').srcObject = stream;
-    // ВАЖНО: Запрашиваем устройства ПОСЛЕ того, как пользователь дал разрешение
     await setupDeviceSelectors();
 }
 
@@ -337,11 +357,11 @@ window.endCall = () => {
 
 async function setupDeviceSelectors() {
     try {
+        // Запрашиваем устройства ПОСЛЕ того, как уже есть доступ к потоку
         const devs = await navigator.mediaDevices.enumerateDevices();
         const aud = document.getElementById('audio-source');
         const vid = document.getElementById('video-source');
         
-        // Сохраняем текущий выбор, если был
         const curAud = aud.value;
         const curVid = vid.value;
         
@@ -354,7 +374,6 @@ async function setupDeviceSelectors() {
             if(d.kind === 'videoinput') vid.appendChild(opt);
         });
         
-        // Восстанавливаем выбор или выбираем первый
         if(curAud) aud.value = curAud;
         if(curVid) vid.value = curVid;
         
@@ -365,14 +384,12 @@ window.changeDevice = async () => {
     const audioId = document.getElementById('audio-source').value;
     const videoId = document.getElementById('video-source').value;
     
-    // Получаем новый поток с выбранными устройствами
     try {
         const newStream = await navigator.mediaDevices.getUserMedia({
             audio: { deviceId: { exact: audioId } },
             video: { deviceId: { exact: videoId } }
         });
 
-        // Заменяем треки в P2P соединении
         if(currentPeer) {
             const oldVideo = localStream.getVideoTracks()[0];
             const newVideo = newStream.getVideoTracks()[0];
@@ -383,11 +400,9 @@ window.changeDevice = async () => {
             if(oldAudio && newAudio) currentPeer.replaceTrack(oldAudio, newAudio, localStream);
         }
 
-        // Обновляем локальное видео
         localStream = newStream;
         document.getElementById('local-video').srcObject = newStream;
         
-        // Обновляем кнопки управления
         const videoTrack = newStream.getVideoTracks()[0];
         document.getElementById('btn-cam').classList.toggle('active', videoTrack && videoTrack.enabled);
         
@@ -413,8 +428,8 @@ window.toggleCam = () => {
     if(!localStream) return;
     let track = localStream.getVideoTracks()[0];
     if(!track) {
-         // Если видео не было, надо запросить его (обычно через changeDevice, но тут подсказка)
-         alert("Камера не активна. Выберите камеру в списке.");
+         // Если видео трека нет, пытаемся добавить его (сложно для P2P), поэтому просим пользователя выбрать камеру в селекторе
+         alert("Включите камеру через список устройств.");
          return;
     }
     track.enabled = !track.enabled;
