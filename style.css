@@ -14,6 +14,12 @@ input { width: 100%; padding: 12px; background: #2c2c2c; border: 1px solid #444;
 .tab-btn { flex: 1; background: transparent; border: none; border-bottom: 2px solid #444; color: #aaa; padding: 10px; cursor: pointer; }
 .tab-btn.active { border-color: var(--primary); color: #fff; }
 
+/* Стили для аватарки при регистрации */
+.avatar-wrapper { position: relative; width: 80px; height: 80px; margin: 0 auto 15px; }
+#avatar-preview { width: 100%; height: 100%; border-radius: 50%; object-fit: cover; }
+.avatar-edit-btn { position: absolute; bottom: 0; right: 0; background: var(--primary); color: #fff; width: 30px; height: 30px; border-radius: 50%; display: flex; align-items: center; justify-content: center; cursor: pointer; font-size: 14px; border: 3px solid var(--sidebar); box-shadow: 0 2px 5px rgba(0,0,0,0.5); }
+.avatar-edit-btn:hover { background: #0077b3; }
+
 .sidebar { width: 320px; background: var(--sidebar); display: flex; flex-direction: column; border-right: 1px solid #000; }
 .my-profile { padding: 15px; background: #2b2b2b; display: flex; align-items: center; gap: 10px; cursor: pointer; }
 .my-profile img { width: 40px; height: 40px; border-radius: 50%; object-fit: cover; }
@@ -43,7 +49,6 @@ input { width: 100%; padding: 12px; background: #2c2c2c; border: 1px solid #444;
 .message.received { align-self: flex-start; background: var(--msg-in); border-bottom-left-radius: 2px; }
 .msg-name { font-size: 11px; color: #ddd; opacity: 0.7; display: block; margin-bottom: 2px; font-weight: bold; }
 
-/* Файловая карточка в чате */
 .file-card { display: flex; align-items: center; gap: 10px; background: rgba(0,0,0,0.2); padding: 10px; border-radius: 8px; text-decoration: none; color: #fff; margin-top: 5px; }
 .file-icon { font-size: 24px; color: #fff; }
 .file-info { display: flex; flex-direction: column; }
@@ -52,8 +57,6 @@ input { width: 100%; padding: 12px; background: #2c2c2c; border: 1px solid #444;
 
 .input-container { background: var(--sidebar); display: flex; flex-direction: column; }
 .input-area { padding: 10px 20px; display: flex; align-items: center; gap: 10px; position: relative; }
-
-/* Превью файла перед отправкой */
 .file-preview-area { background: #2a2a2a; padding: 10px 20px; display: flex; align-items: center; gap: 10px; border-bottom: 1px solid #333; font-size: 13px; color: #fff; }
 .file-preview-area i { color: var(--primary); }
 .file-preview-area button { margin-left: auto; background: none; border: none; color: #aaa; cursor: pointer; }
@@ -88,7 +91,10 @@ select { background: #333; color: #fff; border: 1px solid #555; padding: 5px; bo
 
 @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(255, 255, 255, 0.7); } 70% { box-shadow: 0 0 0 20px rgba(255, 255, 255, 0); } 100% { box-shadow: 0 0 0 0 rgba(255, 255, 255, 0); } }
 
-.primary-btn { width: 100%; padding: 10px; background: var(--primary); color: white; border: none; border-radius: 5px; margin-top: 10px; cursor: pointer; font-weight: bold; }
+/* Главная кнопка (Войти, Создать) */
+.primary-btn { width: 100%; padding: 12px; background: var(--primary); color: white; border: none; border-radius: 8px; margin-top: 15px; cursor: pointer; font-weight: bold; font-size: 14px; }
+.primary-btn:hover { background: #0077b3; }
+
 .danger-btn { width: 100%; padding: 10px; background: #f44336; color: white; border: none; border-radius: 5px; margin-top: 10px; cursor: pointer; }
 .close { position: absolute; top: 10px; right: 15px; font-size: 24px; cursor: pointer; }
 .checklist { text-align: left; max-height: 250px; overflow-y: auto; margin: 10px 0; background: #333; padding: 10px; border-radius: 5px; }
