@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CorpMes</title>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+    <div id="auth-screen" class="screen active">
+        <div class="auth-container">
+            <h1>CorpMes</h1>
+            <input type="text" id="server-url" placeholder="Адрес сервера (192.168.X.X:3000)">
+            <div class="tabs">
+                <button class="tab-btn active" onclick="switchTab('login')">Вход</button>
+                <button class="tab-btn" onclick="switchTab('register')">Регистрация</button>
+            </div>
+            
+            <form id="login-form">
+                <input type="text" id="login-username" placeholder="Логин" required>
+                <input type="password" id="login-password" placeholder="Пароль" required>
+                <button type="submit">Войти</button>
+            </form>
+            <form id="register-form" style="display:none;">
+                <div class="avatar-wrapper">
+                    <img id="avatar-preview" src="https://placehold.co/80">
+                    <input type="file" id="reg-avatar" hidden onchange="previewAvatar(event)">
+                    <button type="button" onclick="document.getElementById('reg-avatar').click()">Фото</button>
+                </div>
+                <input type="text" id="reg-username" placeholder="Логин" required>
+                <input type="text" id="reg-nickname" placeholder="Имя Фамилия" required>
+                <input type="password" id="reg-password" placeholder="Пароль" required>
+                <button type="submit">Создать</button>
+            </form>
+        </div>
+    </div>
+
+    <div id="main-screen" class="screen">
+        <div class="sidebar">
+            <div class="my-profile" onclick="openProfileSettings()">
+                <img id="my-avatar" src="" onerror="this.src='https://placehold.co/50'">
+                <div class="info">
+                    <span id="my-name">...</span>
+                    <small id="my-username-small" style="color:#aaa; font-size:11px;">@login</small>
+                </div>
+                <i class="fas fa-cog"></i>
+            </div>
+            
+            <div class="search-box">
+                <input type="text" id="search-input" placeholder="Поиск (Enter)..." onkeydown="handleSearchKey(event)">
+                <button class="create-group-btn" onclick="openCreateGroupModal()" title="Создать группу">
+                    <i class="fas fa-user-plus"></i>
+                </button>
+            </div>
+            <div class="sidebar-label" id="sidebar-label">ЧАТЫ</div>
+            <div id="chats-list" class="chats-list"></div>
+        </div>
+
+        <div class="chat-area" id="chat-area">
+            <div class="chat-placeholder" id="chat-placeholder">
+                <i class="far fa-comments"></i>
+                <p>Выберите чат</p>
+            </div>
+
+            <div class="chat-interface" id="chat-interface" style="display:none;">
+                <div class="chat-header">
+                    <button class="back-btn" onclick="closeChat()"><i class="fas fa-arrow-left"></i></button>
+                    <img id="chat-avatar" src="">
+                    <div class="chat-title">
+                        <span id="chat-name">User</span>
+                    </div>
+                    <button class="call-btn" onclick="startCall()"><i class="fas fa-phone"></i></button>
+                </div>
+
+                <div id="messages-container"></div>
+
+                <div class="input-container">
+                    <div id="file-preview-area" class="file-preview-area" style="display:none;">
+                        <i class="fas fa-file-lines"></i>
+                        <span id="preview-filename">filename.txt</span>
+                        <button onclick="clearFileSelection()"><i class="fas fa-times"></i></button>
+                    </div>
+
+                    <div class="input-area">
+                        <div id="emoji-picker" class="emoji-picker" style="display:none;"></div>
+                        <button class="attach-btn" onclick="document.getElementById('file-input').click()"><i class="fas fa-paperclip"></i></button>
+                        <input type="file" id="file-input" hidden onchange="handleFileSelect(event)">
+                        <button class="emoji-btn" onclick="toggleEmoji()"><i class="far fa-smile"></i></button>
+                        <textarea id="message-input" rows="1" placeholder="Сообщение..." onkeydown="handleInputKey(event)"></textarea>
+                        <button class="send-btn" onclick="sendMessage()"><i class="fas fa-paper-plane"></i></button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="incoming-call-modal" class="modal">
+        <div class="modal-content call-popup">
+            <img id="caller-avatar" src="https://placehold.co/100" class="pulsing-avatar">
+            <h3 id="caller-name">Входящий звонок...</h3>
+            <div class="call-actions">
+                <button onclick="declineCall()" class="btn-decline"><i class="fas fa-phone-slash"></i></button>
+                <button onclick="acceptCall()" class="btn-accept"><i class="fas fa-phone"></i></button>
+            </div>
+        </div>
+    </div>
+
+    <div id="active-call-modal" class="modal">
+        <div class="call-interface full-screen">
+            <div class="video-grid">
+                <video id="remote-video" autoplay playsinline></video>
+                <div class="local-video-wrapper">
+                    <video id="local-video" autoplay playsinline muted></video>
+                </div>
+            </div>
+            <div class="call-controls-bar">
+                <div class="devices-select">
+                    <label>Микрофон:</label>
+                    <select id="audio-source" onchange="changeDevice()"></select>
+                    <label>Камера:</label>
+                    <select id="video-source" onchange="changeDevice()"></select>
+                </div>
+                <button onclick="toggleMic()" id="btn-mic" class="control-btn active"><i class="fas fa-microphone"></i></button>
+                <button onclick="toggleCam()" id="btn-cam" class="control-btn"><i class="fas fa-video-slash"></i></button>
+                <button onclick="endCall()" class="control-btn hangup"><i class="fas fa-phone-slash"></i></button>
+            </div>
+        </div>
+    </div>
+
+    <div id="create-group-modal" class="modal">
+        <div class="modal-content">
+            <span class="close" onclick="closeModal('create-group-modal')">&times;</span>
+            <h2>Новая группа</h2>
+            <input type="text" id="new-group-name" placeholder="Название группы">
+            <p style="text-align:left; color:#aaa; font-size:12px;">Выберите участников:</p>
+            <div id="group-candidates-list" class="checklist"></div>
+            <button onclick="createGroup()" class="primary-btn">Создать группу</button>
+        </div>
+    </div>
+    
+    <div id="profile-modal" class="modal">
+        <div class="modal-content">
+            <span class="close" onclick="closeModal('profile-modal')">&times;</span>
+            <h2>Профиль</h2>
+            <img id="profile-big-avatar" src="" class="big-avatar">
+            <h3 id="profile-big-name"></h3>
+            <p id="profile-big-username" style="color: #0088cc; margin-top: -10px;"></p>
+            <button onclick="logout()" class="danger-btn">Выйти</button>
+        </div>
+    </div>
+
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+    <script src="https://unpkg.com/simple-peer@9.11.1/simplepeer.min.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>
