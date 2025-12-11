@@ -44,21 +44,19 @@ input { width: 100%; padding: 12px; background: #2c2c2c; border: 1px solid #444;
 .msg-name { font-size: 11px; color: #ddd; opacity: 0.7; display: block; margin-bottom: 2px; font-weight: bold; }
 .msg-edited { font-size: 10px; opacity: 0.6; float: right; margin-left: 5px; margin-top: 5px; }
 
-/* ИСПРАВЛЕНО: Медиа */
 .message img, .message video { 
     max-width: 100%; 
     height: auto; 
-    max-height: 300px; /* Ограничение высоты */
+    max-height: 300px;
     border-radius: 8px; 
     margin-top: 5px; 
     display: block; 
     cursor: pointer; 
-    object-fit: contain; /* Чтобы картинка не обрезалась */
+    object-fit: contain; 
     background: #000;
 }
 
-/* ИСПРАВЛЕНО: Карточка файла */
-/* Используем класс .file-card-box чтобы отвязаться от стилей ссылок */
+/* ФИКС ФАЙЛОВ - Убираем подчеркивания */
 .file-card-box { 
     display: flex; 
     align-items: center; 
@@ -69,6 +67,7 @@ input { width: 100%; padding: 12px; background: #2c2c2c; border: 1px solid #444;
     margin-top: 5px; 
     min-width: 220px; 
     border: 1px solid #3c3c3c; 
+    text-decoration: none !important; /* ВАЖНО */
 }
 .file-icon { 
     font-size: 24px; 
@@ -95,17 +94,21 @@ input { width: 100%; padding: 12px; background: #2c2c2c; border: 1px solid #444;
     overflow: hidden; 
     text-overflow: ellipsis; 
     color: #fff;
+    text-decoration: none !important; /* ВАЖНО */
+    border-bottom: none !important;
 }
 .file-meta { 
     font-size: 11px; 
     color: #888; 
     margin-top: 2px; 
+    text-decoration: none !important; /* ВАЖНО */
 }
 .file-download-btn {
     color: var(--primary);
-    text-decoration: none;
+    text-decoration: none !important;
     font-size: 18px;
     padding: 5px;
+    border: none;
 }
 .file-download-btn:hover { color: #fff; }
 
