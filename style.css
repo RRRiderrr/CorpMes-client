@@ -56,7 +56,7 @@ input { width: 100%; padding: 12px; background: #2c2c2c; border: 1px solid #444;
     background: #000;
 }
 
-/* ФИКС ФАЙЛОВ - Убираем подчеркивания */
+/* ФИКС ФАЙЛОВ */
 .file-card-box { 
     display: flex; 
     align-items: center; 
@@ -67,7 +67,7 @@ input { width: 100%; padding: 12px; background: #2c2c2c; border: 1px solid #444;
     margin-top: 5px; 
     min-width: 220px; 
     border: 1px solid #3c3c3c; 
-    text-decoration: none !important; /* ВАЖНО */
+    text-decoration: none !important; 
 }
 .file-icon { 
     font-size: 24px; 
@@ -81,35 +81,10 @@ input { width: 100%; padding: 12px; background: #2c2c2c; border: 1px solid #444;
     justify-content: center;
     flex-shrink: 0;
 }
-.file-info { 
-    display: flex; 
-    flex-direction: column; 
-    overflow: hidden; 
-    flex: 1; 
-}
-.file-name { 
-    font-weight: bold; 
-    font-size: 13px; 
-    white-space: nowrap; 
-    overflow: hidden; 
-    text-overflow: ellipsis; 
-    color: #fff;
-    text-decoration: none !important; /* ВАЖНО */
-    border-bottom: none !important;
-}
-.file-meta { 
-    font-size: 11px; 
-    color: #888; 
-    margin-top: 2px; 
-    text-decoration: none !important; /* ВАЖНО */
-}
-.file-download-btn {
-    color: var(--primary);
-    text-decoration: none !important;
-    font-size: 18px;
-    padding: 5px;
-    border: none;
-}
+.file-info { display: flex; flex-direction: column; overflow: hidden; flex: 1; }
+.file-name { font-weight: bold; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: #fff; text-decoration: none !important; }
+.file-meta { font-size: 11px; color: #888; margin-top: 2px; text-decoration: none !important; }
+.file-download-btn { color: var(--primary); text-decoration: none !important; font-size: 18px; padding: 5px; border: none; background: transparent; cursor: pointer; }
 .file-download-btn:hover { color: #fff; }
 
 .input-container { background: var(--sidebar); display: flex; flex-direction: column; position: relative; }

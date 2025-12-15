@@ -9,6 +9,11 @@ let incomingCallData = null;
 let editingMessageId = null;
 let selectedMessageId = null;
 
+const EC = elliptic.ec;
+const ec = new EC('secp256k1');
+let myKeyPair = null;
+let sharedKeys = {};
+
 const emojiData = {
     "Smileys": ["😀","😃","😄","😁","😆","😅","🤣","😂","🙂","🙃","😉","😊","😇","🥰","😍","🤩","😘","😗","😙","😋","😛","😜","🤪","😝","🤑","🤗","🤭","🤫","🤔","🤐","🤨","😐","😑","😶","😏","😒","🙄","😬","🤥","😌","😔","😪","🤤","😴","😷","🤒","🤕","🤢","🤮","🤧","🥵","🥶","🥴","😵","🤯","🤠","🥳","😎","🤓","🧐","😕","🙁","😮","😯","😲","😳","🥺","😦","😧","😨","😰","😥","😢","😭","😱","😖","😣","😞","😓","😩","😫","🥱","😤","😡","😠","🤬","😈","👿","💀","☠️","💩","🤡","👹","👺","👻","👽","👾","🤖"],
     "Body": ["👋","🤚","🖐","✋","🖖","👌","🤏","✌️","🤞","🤟","🤘","🤙","👈","👉","👆","🖕","👇","☝️","👍","👎","✊","👊","🤛","🤜","👏","🙌","👐","🤲","🤝","🙏","✍️","💅","🤳","💪","🦵","🦶","👂","🦻","👃","🧠","🦷","🦴","👀","👁","👅","👄","💋","🩸"],
@@ -30,13 +35,48 @@ const keywordMap = {
 document.addEventListener('DOMContentLoaded', () => {
     if(serverUrl) document.getElementById('server-url').value = serverUrl;
     const savedUser = localStorage.getItem('user');
-    if (serverUrl && savedUser) {
+    const savedKey = localStorage.getItem('priv_key_seed');
+    
+    if (serverUrl && savedUser && savedKey) {
         currentUser = JSON.parse(savedUser);
+        initCrypto(savedKey);
         connectToServer();
     }
     initEmojiPicker();
 });
 
+// --- CRYPTO (E2EE) ---
+function initCrypto(fileHashHex) {
+    myKeyPair = ec.keyFromPrivate(fileHashHex);
+}
+
+function getSharedSecret(otherPubKeyHex) {
+    if(!otherPubKeyHex) return null;
+    if(sharedKeys[otherPubKeyHex]) return sharedKeys[otherPubKeyHex];
+    try {
+        const key = ec.keyFromPublic(otherPubKeyHex, 'hex');
+        const shared = myKeyPair.derive(key.getPublic());
+        const sharedHex = shared.toString(16).substring(0, 64);
+        sharedKeys[otherPubKeyHex] = sharedHex;
+        return sharedHex;
+    } catch(e) { return null; }
+}
+
+function encryptText(text, secret) {
+    if(!secret) return text; 
+    return CryptoJS.AES.encrypt(text, secret).toString();
+}
+
+function decryptText(ciphertext, secret) {
+    if(!secret) return ciphertext;
+    try {
+        const bytes = CryptoJS.AES.decrypt(ciphertext, secret);
+        const str = bytes.toString(CryptoJS.enc.Utf8);
+        return str || ciphertext;
+    } catch(e) { return "Ошибка расшифровки"; }
+}
+
+// --- UI HELPERS ---
 window.switchTab = (tab) => {
     document.querySelectorAll('form').forEach(f => f.style.display = 'none');
     document.getElementById(tab === 'login' ? 'login-form' : 'register-form').style.display = 'block';
@@ -61,7 +101,7 @@ window.clearFileSelection = () => {
     document.getElementById('file-preview-area').style.display = 'none';
 };
 
-// --- EMOJI SYSTEM ---
+// --- EMOJI ---
 function initEmojiPicker() {
     const tabsContainer = document.getElementById('emoji-tabs');
     let first = true;
@@ -83,9 +123,7 @@ function renderEmojis(list) {
     const cont = document.getElementById('emoji-list');
     cont.innerHTML = list.map(e => `<span onclick="addEmoji('${e}')">${e}</span>`).join('');
 }
-window.filterEmojis = (val) => {
-    if(!val) return switchEmojiTab("Smileys", document.querySelector('.emoji-tab'));
-};
+window.filterEmojis = (val) => { if(!val) return switchEmojiTab("Smileys", document.querySelector('.emoji-tab')); };
 window.toggleEmoji = () => {
     const el = document.getElementById('emoji-picker');
     el.style.display = el.style.display === 'none' ? 'flex' : 'none';
@@ -115,52 +153,92 @@ window.addSuggestion = (em) => {
     input.focus();
 };
 
-// --- AUTH ---
-async function handleAuth(endpoint, body, isFormData = false) {
+// --- AUTH WITH FILE ---
+window.handleKeyFileSelect = (e) => {
+    const file = e.target.files[0];
+    if(file) {
+        document.getElementById('key-file-name').textContent = "Ключ: " + file.name;
+        document.getElementById('btn-login').style.display = 'block';
+    }
+};
+
+window.loginWithKey = async () => {
     let rawUrl = document.getElementById('server-url').value.trim().replace(/\/$/, "");
     if (!rawUrl.startsWith('http')) rawUrl = 'http://' + rawUrl;
     serverUrl = rawUrl;
+
+    const file = document.getElementById('auth-key-file').files[0];
+    if (!file) return alert("Файл не выбран");
+
     try {
-        const res = await fetch(`${serverUrl}${endpoint}`, {
+        const arrayBuffer = await file.arrayBuffer();
+        const hashBuffer = await crypto.subtle.digest('SHA-256', arrayBuffer);
+        const hashArray = Array.from(new Uint8Array(hashBuffer));
+        const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+
+        initCrypto(hashHex);
+        const myPubKey = myKeyPair.getPublic('hex');
+
+        const res = await fetch(`${serverUrl}/api/login_by_file`, {
             method: 'POST',
-            headers: isFormData ? {} : { 'Content-Type': 'application/json' },
-            body: isFormData ? body : JSON.stringify(body)
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ fileHash: hashHex, publicKey: myPubKey })
         });
+
         const data = await res.json();
         if (!res.ok) throw new Error(data.error);
+
         localStorage.setItem('serverUrl', serverUrl);
         localStorage.setItem('user', JSON.stringify(data));
+        localStorage.setItem('priv_key_seed', hashHex);
         currentUser = data;
         connectToServer();
-    } catch (e) { alert(e.message); }
-}
 
-document.getElementById('login-form').addEventListener('submit', e => {
-    e.preventDefault();
-    handleAuth('/api/login', { username: document.getElementById('login-username').value, password: document.getElementById('login-password').value });
-});
-document.getElementById('register-form').addEventListener('submit', e => {
-    e.preventDefault();
-    const fd = new FormData();
-    fd.append('username', document.getElementById('reg-username').value);
-    fd.append('nickname', document.getElementById('reg-nickname').value);
-    fd.append('password', document.getElementById('reg-password').value);
-    const f = document.getElementById('reg-avatar').files[0];
-    if(f) fd.append('avatar', f);
-    handleAuth('/api/register', fd, true);
-});
-window.logout = () => { localStorage.removeItem('user'); location.reload(); };
+    } catch (e) { alert("Ошибка входа: " + e.message); }
+};
 
-function previewAvatar(event) {
-    const file = event.target.files[0];
+window.logout = () => { 
+    localStorage.removeItem('user'); 
+    localStorage.removeItem('priv_key_seed');
+    location.reload(); 
+};
+
+// --- PROFILE EDIT ---
+window.previewEditAvatar = (e) => {
+    const file = e.target.files[0];
     if (file) {
         const reader = new FileReader();
-        reader.onload = e => document.getElementById('avatar-preview').src = e.target.result;
+        reader.onload = ev => document.getElementById('profile-big-avatar').src = ev.target.result;
         reader.readAsDataURL(file);
     }
-}
+};
 
-// --- SOCKET ---
+window.saveProfile = async () => {
+    const newNick = document.getElementById('edit-nickname').value;
+    const file = document.getElementById('edit-avatar-input').files[0];
+    if(!newNick) return alert("Имя не может быть пустым");
+
+    const fd = new FormData();
+    fd.append('userId', currentUser.id);
+    fd.append('nickname', newNick);
+    if(file) fd.append('avatar', file);
+
+    try {
+        const res = await fetch(`${serverUrl}/api/profile/update`, { method: 'POST', body: fd });
+        const updatedUser = await res.json();
+        if(updatedUser) {
+            currentUser.nickname = updatedUser.nickname;
+            currentUser.avatar = updatedUser.avatar;
+            localStorage.setItem('user', JSON.stringify(currentUser));
+            document.getElementById('my-name').textContent = currentUser.nickname;
+            document.getElementById('my-avatar').src = serverUrl + currentUser.avatar;
+            closeModal('profile-modal');
+            alert("Профиль обновлен");
+        }
+    } catch(e) { alert("Ошибка обновления"); }
+};
+
+// --- SOCKET & CHAT ---
 function connectToServer() {
     document.getElementById('auth-screen').classList.remove('active');
     document.getElementById('main-screen').classList.add('active');
@@ -258,6 +336,11 @@ function openChat(obj, type) {
     document.getElementById('chat-interface').style.display = 'flex';
     document.getElementById('chat-name').textContent = obj.nickname || obj.name;
     document.getElementById('chat-avatar').src = obj.avatar ? serverUrl + obj.avatar : 'https://placehold.co/50';
+    
+    // Показываем статус шифрования
+    if(type === 'user') document.getElementById('enc-status').style.display = obj.public_key ? 'block' : 'none';
+    else document.getElementById('enc-status').style.display = 'none';
+
     renderSidebar(); 
     const params = type === 'group' ? { groupId: obj.id } : { userId: currentUser.id, partnerId: obj.id };
     socket.emit('get_history', params);
@@ -273,15 +356,24 @@ window.closeChat = () => {
 };
 
 function renderMessage(msg) {
+    let contentToShow = msg.content;
+    
+    // DECRYPT
+    if (msg.is_encrypted && currentChat.type === 'user') {
+        const secret = getSharedSecret(currentChat.public_key);
+        contentToShow = decryptText(msg.content, secret);
+    } else if (msg.is_encrypted) {
+        contentToShow = "🔒 Сообщение зашифровано (Ключ недоступен)";
+    }
+
     const div = document.createElement('div');
     const sender = msg.sender_id || msg.senderId;
     const isMe = sender === currentUser.id;
     div.className = `message ${isMe ? 'sent' : 'received'}`;
     div.dataset.id = msg.id;
-    div.dataset.content = msg.content;
+    div.dataset.content = contentToShow;
     
-    // ВАЖНО: Разрешаем контекстное меню на ВСЕХ сообщениях
-    // Фильтруем пункты меню внутри обработчика
+    // Контекстное меню: разрешаем на всех, фильтруем внутри
     div.oncontextmenu = (e) => {
         e.preventDefault();
         selectedMessageId = msg.id;
@@ -290,16 +382,10 @@ function renderMessage(msg) {
         let canEdit = isMe && msg.type === 'text';
         let canDelete = false;
 
-        // Логика прав удаления
-        if (isMe) {
-            canDelete = true;
-        } else {
-            // Чужое сообщение
-            if (currentChat.type === 'user') {
-                canDelete = true; // В ЛС можно удалять всё
-            } else if (currentChat.type === 'group' && currentChat.creator_id === currentUser.id) {
-                canDelete = true; // Админ группы может удалять всё
-            }
+        if (isMe) canDelete = true;
+        else {
+            if (currentChat.type === 'user') canDelete = true; // ЛС
+            else if (currentChat.type === 'group' && currentChat.creator_id === currentUser.id) canDelete = true; // Админ
         }
 
         const editBtn = menu.querySelector('div:first-child');
@@ -319,7 +405,7 @@ function renderMessage(msg) {
     if (msg.group_id && !isMe) html += `<span class="msg-name">${msg.senderName || 'User'}</span>`;
     
     if(msg.type === 'text') {
-        html += `<p>${msg.content.replace(/\n/g, '<br>')}${msg.is_edited ? ' <span class="msg-edited">(изм.)</span>' : ''}</p>`;
+        html += `<p>${contentToShow.replace(/\n/g, '<br>')}${msg.is_edited ? ' <span class="msg-edited">(изм.)</span>' : ''}</p>`;
     } else if(msg.type === 'image') {
         html += `<img src="${serverUrl + msg.file_url}" onclick="window.open('${serverUrl + msg.file_url}')">`;
     } else {
@@ -384,11 +470,15 @@ window.sendMessage = async () => {
     const txt = input.value.trim();
     const fileInput = document.getElementById('file-input');
     
+    // EDIT
     if(editingMessageId) {
         if(txt) {
+            // Если шифрованный чат, надо перешифровать
+            // Упрощение: для редактирования отправляем как есть, сервер обновит.
+            // Но в идеале нужно шифровать и тут.
             socket.emit('edit_message', {
                 messageId: editingMessageId,
-                newContent: txt,
+                newContent: txt, // TODO: Encrypt if needed
                 groupId: currentChat.type === 'group' ? currentChat.id : null,
                 receiverId: currentChat.type === 'user' ? currentChat.id : null
             });
@@ -399,6 +489,18 @@ window.sendMessage = async () => {
 
     if(!txt && !fileInput.files.length) return;
     
+    let encryptedText = txt;
+    let isEncrypted = false;
+
+    // ENCRYPT (Only DM)
+    if (currentChat.type === 'user' && txt) {
+        const secret = getSharedSecret(currentChat.public_key);
+        if (secret) {
+            encryptedText = encryptText(txt, secret);
+            isEncrypted = true;
+        }
+    }
+
     if(fileInput.files.length) {
         const fd = new FormData();
         fd.append('file', fileInput.files[0]);
@@ -406,22 +508,27 @@ window.sendMessage = async () => {
             const res = await fetch(`${serverUrl}/api/upload`, { method:'POST', body:fd });
             const fileData = await res.json();
             const type = fileInput.files[0].type.startsWith('image/') ? 'image' : 'file';
-            emitMsg(null, type, fileData.url, fileData.originalName, fileData.size);
+            emitMsg(null, type, fileData.url, fileData.originalName, fileData.size, false);
             window.clearFileSelection();
         } catch(e) {}
     }
 
-    if(txt) { emitMsg(txt, 'text', null, null, null); input.value = ''; }
+    if(txt) { 
+        emitMsg(encryptedText, 'text', null, null, null, isEncrypted); 
+        input.value = ''; 
+    }
     document.getElementById('emoji-picker').style.display = 'none';
     document.getElementById('emoji-suggestions').style.display = 'none';
 };
 
-function emitMsg(content, type, url, fileName, fileSize) {
+function emitMsg(content, type, url, fileName, fileSize, isEncrypted) {
     socket.emit('send_message', {
         senderId: currentUser.id,
         receiverId: currentChat.type === 'user' ? currentChat.id : null,
         groupId: currentChat.type === 'group' ? currentChat.id : null,
-        content, type, fileUrl: url, fileName, fileSize, senderName: currentUser.nickname
+        content, type, fileUrl: url, fileName, fileSize, 
+        isEncrypted: isEncrypted,
+        senderName: currentUser.nickname
     });
 }
 

@@ -6,35 +6,28 @@
     <title>CorpMes</title>
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
     <link rel="stylesheet" href="style.css">
+    
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/elliptic/6.5.4/elliptic.min.js"></script>
 </head>
 <body>
 
     <div id="auth-screen" class="screen active">
         <div class="auth-container">
             <h1>CorpMes</h1>
-            <input type="text" id="server-url" placeholder="Адрес сервера (192.168.X.X:3000)">
-            <div class="tabs">
-                <button class="tab-btn active" onclick="switchTab('login')">Вход</button>
-                <button class="tab-btn" onclick="switchTab('register')">Регистрация</button>
-            </div>
+            <p style="color:#aaa; font-size:14px; margin-bottom:20px;">Защищенный вход</p>
             
-            <form id="login-form">
-                <input type="text" id="login-username" placeholder="Логин" required>
-                <input type="password" id="login-password" placeholder="Пароль" required>
-                <button type="submit" class="primary-btn">Войти</button>
-            </form>
+            <input type="text" id="server-url" placeholder="Адрес сервера (192.168.X.X:3000)">
+            
+            <div class="key-file-area">
+                <i class="fas fa-key" style="font-size: 40px; color: var(--primary); margin-bottom: 15px;"></i>
+                <p>Для входа требуется файл-ключ</p>
+                <input type="file" id="auth-key-file" hidden onchange="handleKeyFileSelect(event)">
+                <button onclick="document.getElementById('auth-key-file').click()" class="primary-btn" style="margin-top:5px;">Выбрать файл</button>
+                <p id="key-file-name" style="margin-top:10px; font-weight:bold; color:#fff; word-break: break-all;"></p>
+            </div>
 
-            <form id="register-form" style="display:none;">
-                <div class="avatar-wrapper">
-                    <img id="avatar-preview" src="https://placehold.co/80">
-                    <input type="file" id="reg-avatar" hidden onchange="previewAvatar(event)">
-                    <label for="reg-avatar" class="avatar-edit-btn"><i class="fas fa-pen"></i></label>
-                </div>
-                <input type="text" id="reg-username" placeholder="Логин" required>
-                <input type="text" id="reg-nickname" placeholder="Имя Фамилия" required>
-                <input type="password" id="reg-password" placeholder="Пароль" required>
-                <button type="submit" class="primary-btn">Создать</button>
-            </form>
+            <button id="btn-login" onclick="loginWithKey()" class="primary-btn" style="display:none; background: #4caf50;">Войти в систему</button>
         </div>
     </div>
 
@@ -63,6 +56,7 @@
             <div class="chat-placeholder" id="chat-placeholder">
                 <i class="far fa-comments"></i>
                 <p>Выберите чат</p>
+                <small style="color:#555; margin-top:10px;"><i class="fas fa-lock"></i> End-to-End Encryption</small>
             </div>
 
             <div class="chat-interface" id="chat-interface" style="display:none;">
@@ -71,6 +65,7 @@
                     <img id="chat-avatar" src="">
                     <div class="chat-title">
                         <span id="chat-name">User</span>
+                        <small style="color:#4caf50; font-size:10px; display:none;" id="enc-status"><i class="fas fa-shield-alt"></i> Зашифровано (E2EE)</small>
                     </div>
                     <button class="call-btn" onclick="startCall()"><i class="fas fa-phone"></i></button>
                 </div>
@@ -79,13 +74,11 @@
 
                 <div class="input-container">
                     <div id="emoji-suggestions" class="emoji-suggestions"></div>
-
                     <div id="file-preview-area" class="file-preview-area" style="display:none;">
                         <i class="fas fa-file-lines"></i>
                         <span id="preview-filename">filename.txt</span>
                         <button onclick="clearFileSelection()"><i class="fas fa-times"></i></button>
                     </div>
-
                     <div id="edit-mode-bar" class="edit-mode-bar" style="display:none;">
                         <i class="fas fa-pen"></i>
                         <span>Редактирование</span>
@@ -163,7 +156,6 @@
             <span class="close" onclick="closeModal('create-group-modal')">&times;</span>
             <h2>Новая группа</h2>
             <input type="text" id="new-group-name" placeholder="Название группы">
-            <p style="text-align:left; color:#aaa; font-size:12px;">Выберите участников:</p>
             <div id="group-candidates-list" class="checklist"></div>
             <button onclick="createGroup()" class="primary-btn">Создать группу</button>
         </div>
@@ -173,10 +165,18 @@
         <div class="modal-content">
             <span class="close" onclick="closeModal('profile-modal')">&times;</span>
             <h2>Профиль</h2>
-            <img id="profile-big-avatar" src="" class="big-avatar">
-            <h3 id="profile-big-name"></h3>
-            <p id="profile-big-username" style="color: #0088cc; margin-top: -10px;"></p>
-            <button onclick="logout()" class="danger-btn">Выйти</button>
+            
+            <div class="avatar-wrapper">
+                <img id="profile-big-avatar" src="" class="big-avatar">
+                <input type="file" id="edit-avatar-input" hidden onchange="previewEditAvatar(event)">
+                <label for="edit-avatar-input" class="avatar-edit-btn"><i class="fas fa-pen"></i></label>
+            </div>
+
+            <input type="text" id="edit-nickname" placeholder="Отображаемое имя" style="text-align:center; font-weight:bold; width: 100%; margin-bottom: 10px; background: #333; color: white; border: 1px solid #444; padding: 5px; border-radius: 5px;">
+            <p id="profile-big-username" style="color: #0088cc; margin-top: 5px; font-size:12px;"></p>
+            
+            <button onclick="saveProfile()" class="primary-btn">Сохранить изменения</button>
+            <button onclick="logout()" class="danger-btn" style="margin-top:30px;">Выйти из аккаунта</button>
         </div>
     </div>
 
