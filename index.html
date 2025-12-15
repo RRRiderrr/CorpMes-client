@@ -17,7 +17,7 @@
             <h1>CorpMes</h1>
             <p style="color:#aaa; font-size:14px; margin-bottom:20px;">Защищенный вход</p>
             
-            <input type="text" id="server-url" placeholder="Адрес сервера (192.168.X.X:3000)">
+            <input type="text" id="server-url" placeholder="Адрес сервера (https://...)">
             
             <div class="key-file-area">
                 <i class="fas fa-key" style="font-size: 40px; color: var(--primary); margin-bottom: 15px;"></i>
@@ -69,6 +69,7 @@
                     <div class="chat-title">
                         <span id="chat-name">User</span>
                         <small style="color:#4caf50; font-size:10px; display:none;" id="enc-status"><i class="fas fa-shield-alt"></i> Зашифровано (E2EE)</small>
+                        <small style="color:#ff5555; font-size:10px; display:none;" id="chat-status"></small>
                     </div>
                     <button class="call-btn" onclick="startCall()"><i class="fas fa-phone"></i></button>
                 </div>
