@@ -258,7 +258,6 @@ function connectToServer() {
     });
 
     socket.on('user_deleted_status', (data) => {
-        // Если открыт чат с удаленным юзером - обновляем хедер
         if(currentChat && currentChat.id === data.id && currentChat.type === 'user') {
             document.getElementById('chat-status').textContent = 'Удален';
             const ava = document.getElementById('chat-avatar');
@@ -269,7 +268,6 @@ function connectToServer() {
             icon.innerHTML = '<i class="fas fa-skull"></i>';
             ava.parentNode.appendChild(icon);
         }
-        // Обновляем сайдбар
         socket.emit('authenticate', currentUser.id);
     });
 
@@ -367,7 +365,6 @@ function openChat(obj, type) {
     const ava = document.getElementById('chat-avatar');
     ava.src = obj.avatar ? serverUrl + obj.avatar : 'https://placehold.co/50';
     
-    // Очищаем старые черепки
     const oldIcon = ava.parentNode.querySelector('.header-deleted-icon');
     if(oldIcon) oldIcon.remove();
 
@@ -704,9 +701,12 @@ window.createGroup = () => {
 };
 window.openProfileSettings = () => {
     document.getElementById('profile-modal').style.display = 'flex';
-    document.getElementById('profile-big-name').textContent = currentUser.nickname;
+    document.getElementById('edit-nickname').value = currentUser.nickname;
     document.getElementById('profile-big-username').textContent = '@' + currentUser.username;
-    document.getElementById('profile-big-avatar').src = currentUser.avatar ? serverUrl + currentUser.avatar : 'https://placehold.co/100';
+    
+    // ВАЖНО: Добавляем serverUrl, чтобы картинка загрузилась
+    const avatarSrc = currentUser.avatar ? serverUrl + currentUser.avatar : 'https://placehold.co/100';
+    document.getElementById('profile-big-avatar').src = avatarSrc;
 };
 function formatBytes(bytes, decimals = 2) {
     if (!+bytes) return '0 B';
@@ -715,4 +715,37 @@ function formatBytes(bytes, decimals = 2) {
     const sizes = ['B', 'KB', 'MB', 'GB'];
     const i = Math.floor(Math.log(bytes) / Math.log(k));
     return `${parseFloat((bytes / Math.pow(k, i)).toFixed(dm))} ${sizes[i]}`;
+}
+
+// --- DISCORD-STYLE NOTIFICATION ---
+window.copyUsername = () => {
+    // В currentUser.username лежит чистый логин без @
+    const fullId = "@" + currentUser.username; 
+    
+    navigator.clipboard.writeText(fullId).then(() => {
+        showToast("Ваш ID скопирован в буфер обмена");
+    }).catch(err => {
+        console.error('Ошибка копирования: ', err);
+    });
+};
+
+function showToast(message) {
+    const oldToast = document.querySelector('.discord-toast');
+    if (oldToast) oldToast.remove();
+
+    const toast = document.createElement('div');
+    toast.className = 'discord-toast';
+    toast.textContent = message;
+    
+    document.body.appendChild(toast);
+
+    // Force reflow
+    void toast.offsetWidth; 
+
+    toast.classList.add('show');
+
+    setTimeout(() => {
+        toast.classList.remove('show');
+        setTimeout(() => toast.remove(), 300);
+    }, 2000);
 }
