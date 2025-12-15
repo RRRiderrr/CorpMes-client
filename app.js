@@ -38,32 +38,32 @@ document.addEventListener('DOMContentLoaded', () => {
     const savedKey = localStorage.getItem('priv_key_seed');
     
     if (serverUrl && savedUser && savedKey) {
-        // ВАЖНО: Перед входом проверяем валидность юзера через HTTP запрос
-        // Это решит проблему "оффлайн кика" - скрипт сразу поймет, что юзер удален
+        // ПРОВЕРКА СЕССИИ ПЕРЕД ЗАПУСКОМ
+        const userObj = JSON.parse(savedUser);
+        
         fetch(`${serverUrl}/api/validate_user`, {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({
-                id: JSON.parse(savedUser).id,
-                fileHash: savedKey
+                id: userObj.id,
+                sessionToken: userObj.sessionToken // Проверяем токен, а не файл
             })
         })
         .then(res => res.json())
         .then(data => {
             if (data.valid) {
-                currentUser = JSON.parse(savedUser);
+                currentUser = userObj;
                 initCrypto(savedKey);
                 connectToServer();
             } else {
-                // Если сервер сказал "невалиден" (удален или изменен хеш)
+                // Если сессия сброшена (Kick All) или юзер удален
                 window.logout();
             }
         })
         .catch(err => {
-            // Если сервер лежит, можно либо пустить (риск), либо выкинуть.
-            // Для надежности попробуем пустить, а сокет потом кикнет если что.
-            console.error("Server check failed, trying socket fallback");
-            currentUser = JSON.parse(savedUser);
+            console.error("Connection check failed", err);
+            // Если не смогли достучаться, пробуем войти, сокет кикнет если что
+            currentUser = userObj;
             initCrypto(savedKey);
             connectToServer();
         });
@@ -215,7 +215,7 @@ window.loginWithKey = async () => {
         if (!res.ok) throw new Error(data.error);
 
         localStorage.setItem('serverUrl', serverUrl);
-        localStorage.setItem('user', JSON.stringify(data));
+        localStorage.setItem('user', JSON.stringify(data)); // Теперь тут есть sessionToken
         localStorage.setItem('priv_key_seed', hashHex);
         currentUser = data;
         connectToServer();
@@ -726,6 +726,7 @@ window.openProfileSettings = () => {
     document.getElementById('profile-modal').style.display = 'flex';
     document.getElementById('edit-nickname').value = currentUser.nickname;
     document.getElementById('profile-big-username').textContent = '@' + currentUser.username;
+    // ВАЖНО: serverUrl для аватарки
     const avatarSrc = currentUser.avatar ? serverUrl + currentUser.avatar : 'https://placehold.co/100';
     document.getElementById('profile-big-avatar').src = avatarSrc;
 };
@@ -740,7 +741,9 @@ function formatBytes(bytes, decimals = 2) {
 
 // --- DISCORD-STYLE NOTIFICATION ---
 window.copyUsername = () => {
+    // В currentUser.username лежит чистый логин без @
     const fullId = "@" + currentUser.username; 
+    
     navigator.clipboard.writeText(fullId).then(() => {
         showToast("Ваш ID скопирован в буфер обмена");
     }).catch(err => {
@@ -749,6 +752,7 @@ window.copyUsername = () => {
 };
 
 function showToast(message) {
+    // Удаляем старый тост если есть
     const oldToast = document.querySelector('.discord-toast');
     if (oldToast) oldToast.remove();
 
@@ -757,7 +761,10 @@ function showToast(message) {
     toast.textContent = message;
     
     document.body.appendChild(toast);
+
+    // Force reflow для анимации
     void toast.offsetWidth; 
+
     toast.classList.add('show');
 
     setTimeout(() => {
