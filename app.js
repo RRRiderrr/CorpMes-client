@@ -198,8 +198,7 @@ window.loginWithKey = async () => {
 };
 
 window.logout = () => { 
-    localStorage.removeItem('user'); 
-    localStorage.removeItem('priv_key_seed');
+    localStorage.clear(); // Полная очистка
     location.reload(); 
 };
 
@@ -252,6 +251,7 @@ function connectToServer() {
     socket.on('sidebar_update', (chats) => { sidebarChats = chats; renderSidebar(); });
     socket.on('search_results', (users) => renderSidebar(users, true));
 
+    // --- КИЛЛ СВИТЧ (МОЛЧА) ---
     socket.on('force_logout', () => {
         window.logout();
     });
@@ -701,7 +701,7 @@ window.openProfileSettings = () => {
     document.getElementById('profile-modal').style.display = 'flex';
     document.getElementById('edit-nickname').value = currentUser.nickname;
     document.getElementById('profile-big-username').textContent = '@' + currentUser.username;
-    // ВАЖНО: serverUrl для аватарки
+    // ВАЖНО: Добавляем serverUrl, чтобы картинка загрузилась
     const avatarSrc = currentUser.avatar ? serverUrl + currentUser.avatar : 'https://placehold.co/100';
     document.getElementById('profile-big-avatar').src = avatarSrc;
 };
@@ -716,7 +716,9 @@ function formatBytes(bytes, decimals = 2) {
 
 // --- DISCORD-STYLE NOTIFICATION ---
 window.copyUsername = () => {
+    // В currentUser.username лежит чистый логин без @
     const fullId = "@" + currentUser.username; 
+    
     navigator.clipboard.writeText(fullId).then(() => {
         showToast("Ваш ID скопирован в буфер обмена");
     }).catch(err => {
@@ -725,6 +727,7 @@ window.copyUsername = () => {
 };
 
 function showToast(message) {
+    // Удаляем старый тост если есть
     const oldToast = document.querySelector('.discord-toast');
     if (oldToast) oldToast.remove();
 
@@ -733,7 +736,10 @@ function showToast(message) {
     toast.textContent = message;
     
     document.body.appendChild(toast);
+
+    // Force reflow для анимации
     void toast.offsetWidth; 
+
     toast.classList.add('show');
 
     setTimeout(() => {
