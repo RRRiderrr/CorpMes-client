@@ -253,7 +253,6 @@ function connectToServer() {
     socket.on('search_results', (users) => renderSidebar(users, true));
 
     socket.on('force_logout', () => {
-        alert("Доступ закрыт администратором.");
         window.logout();
     });
 
@@ -395,7 +394,6 @@ window.closeChat = () => {
 function renderMessage(msg) {
     let contentToShow = msg.content;
     
-    // DECRYPT
     if (msg.is_encrypted && currentChat.type === 'user') {
         const secret = getSharedSecret(currentChat.public_key);
         contentToShow = decryptText(msg.content, secret);
@@ -703,8 +701,7 @@ window.openProfileSettings = () => {
     document.getElementById('profile-modal').style.display = 'flex';
     document.getElementById('edit-nickname').value = currentUser.nickname;
     document.getElementById('profile-big-username').textContent = '@' + currentUser.username;
-    
-    // ВАЖНО: Добавляем serverUrl, чтобы картинка загрузилась
+    // ВАЖНО: serverUrl для аватарки
     const avatarSrc = currentUser.avatar ? serverUrl + currentUser.avatar : 'https://placehold.co/100';
     document.getElementById('profile-big-avatar').src = avatarSrc;
 };
@@ -719,9 +716,7 @@ function formatBytes(bytes, decimals = 2) {
 
 // --- DISCORD-STYLE NOTIFICATION ---
 window.copyUsername = () => {
-    // В currentUser.username лежит чистый логин без @
     const fullId = "@" + currentUser.username; 
-    
     navigator.clipboard.writeText(fullId).then(() => {
         showToast("Ваш ID скопирован в буфер обмена");
     }).catch(err => {
@@ -738,10 +733,7 @@ function showToast(message) {
     toast.textContent = message;
     
     document.body.appendChild(toast);
-
-    // Force reflow
     void toast.offsetWidth; 
-
     toast.classList.add('show');
 
     setTimeout(() => {
