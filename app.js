@@ -252,6 +252,12 @@ function connectToServer() {
     socket.on('sidebar_update', (chats) => { sidebarChats = chats; renderSidebar(); });
     socket.on('search_results', (users) => renderSidebar(users, true));
 
+    // ОБРАБОТКА "FORCE LOGOUT"
+    socket.on('force_logout', () => {
+        alert("Ваш аккаунт был удален администратором.");
+        logout();
+    });
+
     socket.on('new_message', (msg) => {
         if ((msg.group_id && currentChat?.type === 'group' && currentChat.id === msg.group_id) ||
             (!msg.group_id && currentChat?.type === 'user' && (msg.sender_id === currentChat.id || msg.sender_id === currentUser.id))) {
@@ -337,7 +343,6 @@ function openChat(obj, type) {
     document.getElementById('chat-name').textContent = obj.nickname || obj.name;
     document.getElementById('chat-avatar').src = obj.avatar ? serverUrl + obj.avatar : 'https://placehold.co/50';
     
-    // Показываем статус шифрования
     if(type === 'user') document.getElementById('enc-status').style.display = obj.public_key ? 'block' : 'none';
     else document.getElementById('enc-status').style.display = 'none';
 
@@ -373,7 +378,6 @@ function renderMessage(msg) {
     div.dataset.id = msg.id;
     div.dataset.content = contentToShow;
     
-    // Контекстное меню: разрешаем на всех, фильтруем внутри
     div.oncontextmenu = (e) => {
         e.preventDefault();
         selectedMessageId = msg.id;
@@ -384,8 +388,8 @@ function renderMessage(msg) {
 
         if (isMe) canDelete = true;
         else {
-            if (currentChat.type === 'user') canDelete = true; // ЛС
-            else if (currentChat.type === 'group' && currentChat.creator_id === currentUser.id) canDelete = true; // Админ
+            if (currentChat.type === 'user') canDelete = true; 
+            else if (currentChat.type === 'group' && currentChat.creator_id === currentUser.id) canDelete = true; 
         }
 
         const editBtn = menu.querySelector('div:first-child');
@@ -470,15 +474,11 @@ window.sendMessage = async () => {
     const txt = input.value.trim();
     const fileInput = document.getElementById('file-input');
     
-    // EDIT
     if(editingMessageId) {
         if(txt) {
-            // Если шифрованный чат, надо перешифровать
-            // Упрощение: для редактирования отправляем как есть, сервер обновит.
-            // Но в идеале нужно шифровать и тут.
             socket.emit('edit_message', {
                 messageId: editingMessageId,
-                newContent: txt, // TODO: Encrypt if needed
+                newContent: txt, // TODO: Encrypt
                 groupId: currentChat.type === 'group' ? currentChat.id : null,
                 receiverId: currentChat.type === 'user' ? currentChat.id : null
             });
