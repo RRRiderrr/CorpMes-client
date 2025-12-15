@@ -252,11 +252,28 @@ function connectToServer() {
     socket.on('sidebar_update', (chats) => { sidebarChats = chats; renderSidebar(); });
     socket.on('search_results', (users) => renderSidebar(users, true));
 
-    // КИЛЛ СВИТЧ
     socket.on('force_logout', () => {
         alert("Доступ закрыт администратором.");
         window.logout();
     });
+
+    socket.on('user_deleted_status', (data) => {
+        // Если открыт чат с удаленным юзером - обновляем хедер
+        if(currentChat && currentChat.id === data.id && currentChat.type === 'user') {
+            document.getElementById('chat-status').textContent = 'Удален';
+            const ava = document.getElementById('chat-avatar');
+            if(ava.parentNode.querySelector('.header-deleted-icon')) return;
+            ava.src = 'https://placehold.co/50?text=X';
+            const icon = document.createElement('div');
+            icon.className = 'header-deleted-icon';
+            icon.innerHTML = '<i class="fas fa-skull"></i>';
+            ava.parentNode.appendChild(icon);
+        }
+        // Обновляем сайдбар
+        socket.emit('authenticate', currentUser.id);
+    });
+
+    socket.on('user_revived', () => socket.emit('authenticate', currentUser.id));
 
     socket.on('new_message', (msg) => {
         if ((msg.group_id && currentChat?.type === 'group' && currentChat.id === msg.group_id) ||
@@ -321,7 +338,13 @@ function renderSidebar(list = null, isSearch = false) {
         el.className = 'chat-item';
         if(currentChat && currentChat.id === item.id && currentChat.type === (item.type || 'user')) el.classList.add('active');
         const avatar = item.avatar ? serverUrl + item.avatar : 'https://placehold.co/50';
-        el.innerHTML = `<img src="${avatar}"><div><div style="font-weight:bold">${item.nickname || item.name}</div><div style="font-size:12px; color:#aaa">${item.type === 'group' ? 'Группа' : ''}</div></div>`;
+        
+        let deletedBadge = '';
+        if(item.is_deleted) {
+            deletedBadge = '<div class="deleted-overlay"><i class="fas fa-skull"></i></div>';
+        }
+
+        el.innerHTML = `<div style="position:relative"><img src="${avatar}">${deletedBadge}</div><div><div style="font-weight:bold">${item.nickname || item.name}</div><div style="font-size:12px; color:#aaa">${item.type === 'group' ? 'Группа' : ''}</div></div>`;
         el.onclick = () => openChat(item, isSearch ? 'user' : item.type);
         container.appendChild(el);
     });
@@ -341,7 +364,19 @@ function openChat(obj, type) {
     document.getElementById('chat-placeholder').style.display = 'none';
     document.getElementById('chat-interface').style.display = 'flex';
     document.getElementById('chat-name').textContent = obj.nickname || obj.name;
-    document.getElementById('chat-avatar').src = obj.avatar ? serverUrl + obj.avatar : 'https://placehold.co/50';
+    const ava = document.getElementById('chat-avatar');
+    ava.src = obj.avatar ? serverUrl + obj.avatar : 'https://placehold.co/50';
+    
+    // Очищаем старые черепки
+    const oldIcon = ava.parentNode.querySelector('.header-deleted-icon');
+    if(oldIcon) oldIcon.remove();
+
+    if(obj.is_deleted) {
+        const icon = document.createElement('div');
+        icon.className = 'header-deleted-icon';
+        icon.innerHTML = '<i class="fas fa-skull"></i>';
+        ava.parentNode.appendChild(icon);
+    }
     
     if(type === 'user') document.getElementById('enc-status').style.display = obj.public_key ? 'block' : 'none';
     else document.getElementById('enc-status').style.display = 'none';
