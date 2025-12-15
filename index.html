@@ -33,13 +33,16 @@
 
     <div id="main-screen" class="screen">
         <div class="sidebar">
-            <div class="my-profile" onclick="openProfileSettings()">
-                <img id="my-avatar" src="" onerror="this.src='https://placehold.co/50'">
+            <div class="my-profile">
+                <div style="position:relative; cursor:pointer;" onclick="openProfileSettings()">
+                    <img id="my-avatar" src="" onerror="this.src='https://placehold.co/50'">
+                    <i class="fas fa-cog" style="position:absolute; bottom:0; right:0; background:#000; border-radius:50%; padding:2px; font-size:10px;"></i>
+                </div>
+                
                 <div class="info">
                     <span id="my-name">...</span>
-                    <small id="my-username-small" style="color:#aaa; font-size:11px;">@login</small>
+                    <small id="my-username-small" onclick="copyUsername()" title="Нажмите, чтобы скопировать ID">@login</small>
                 </div>
-                <i class="fas fa-cog"></i>
             </div>
             
             <div class="search-box">
@@ -138,10 +141,10 @@
     <div id="delete-modal" class="modal">
         <div class="modal-content">
             <h3>Удалить сообщение?</h3>
-            <div style="margin-top:20px; display:flex; flex-direction:column; gap:10px;">
-                <button onclick="confirmDelete('me')" class="primary-btn" style="background:#444;">Удалить у меня</button>
-                <button onclick="confirmDelete('everyone')" class="danger-btn">Удалить у всех</button>
-                <button onclick="closeModal('delete-modal')" class="primary-btn" style="background:transparent; border:1px solid #555;">Отмена</button>
+            <div style="margin-top:20px; display:flex; flex-direction:column; gap:10px; width:100%;">
+                <button onclick="confirmDelete('me')" class="primary-btn" style="background:#444; margin:0;">Удалить у меня</button>
+                <button onclick="confirmDelete('everyone')" class="danger-btn" style="margin:0;">Удалить у всех</button>
+                <button onclick="closeModal('delete-modal')" class="primary-btn" style="background:transparent; border:1px solid #555; margin:0;">Отмена</button>
             </div>
         </div>
     </div>
@@ -166,8 +169,8 @@
             <span class="close" onclick="closeModal('profile-modal')">&times;</span>
             <h2>Профиль</h2>
             
-            <div class="avatar-wrapper">
-                <img id="profile-big-avatar" src="" class="big-avatar">
+            <div class="avatar-wrapper profile-wrapper">
+                <img id="profile-big-avatar" src="" class="big-avatar" onerror="this.src='https://placehold.co/100'">
                 <input type="file" id="edit-avatar-input" hidden onchange="previewEditAvatar(event)">
                 <label for="edit-avatar-input" class="avatar-edit-btn"><i class="fas fa-pen"></i></label>
             </div>
