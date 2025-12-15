@@ -252,10 +252,10 @@ function connectToServer() {
     socket.on('sidebar_update', (chats) => { sidebarChats = chats; renderSidebar(); });
     socket.on('search_results', (users) => renderSidebar(users, true));
 
-    // ОБРАБОТКА "FORCE LOGOUT"
+    // КИЛЛ СВИТЧ
     socket.on('force_logout', () => {
-        alert("Ваш аккаунт был удален администратором.");
-        logout();
+        alert("Доступ закрыт администратором.");
+        window.logout();
     });
 
     socket.on('new_message', (msg) => {
