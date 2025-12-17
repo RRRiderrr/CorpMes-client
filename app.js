@@ -41,23 +41,14 @@ document.addEventListener('DOMContentLoaded', () => {
     if (serverUrl && savedUser && savedKey) {
         const userObj = JSON.parse(savedUser);
         fetch(`${serverUrl}/api/validate_user`, {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
+            method: 'POST', headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({ id: userObj.id, sessionToken: userObj.sessionToken })
         })
         .then(res => res.json())
         .then(data => {
-            if (data.valid) {
-                currentUser = userObj;
-                initCrypto(savedKey);
-                connectToServer();
-            } else window.logout();
+            if (data.valid) { currentUser = userObj; initCrypto(savedKey); connectToServer(); } else window.logout();
         })
-        .catch(err => {
-            currentUser = userObj;
-            initCrypto(savedKey);
-            connectToServer();
-        });
+        .catch(err => { currentUser = userObj; initCrypto(savedKey); connectToServer(); });
     }
     initEmojiPicker();
 });
@@ -79,41 +70,20 @@ function decryptText(ciphertext, secret) {
     catch(e) { return "Ошибка расшифровки"; }
 }
 
-window.switchTab = (tab) => {
-    document.querySelectorAll('form').forEach(f => f.style.display = 'none');
-    document.getElementById(tab === 'login' ? 'login-form' : 'register-form').style.display = 'block';
-    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-    event.target.classList.add('active');
-};
+window.switchTab = (tab) => { document.querySelectorAll('form').forEach(f => f.style.display = 'none'); document.getElementById(tab === 'login' ? 'login-form' : 'register-form').style.display = 'block'; document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active')); event.target.classList.add('active'); };
 window.closeModal = (id) => document.getElementById(id).style.display = 'none';
-window.handleFileSelect = (e) => {
-    const file = e.target.files[0];
-    if(file) { document.getElementById('file-preview-area').style.display = 'flex'; document.getElementById('preview-filename').textContent = file.name; }
-    else document.getElementById('file-preview-area').style.display = 'none';
-};
+window.handleFileSelect = (e) => { const file = e.target.files[0]; if(file) { document.getElementById('file-preview-area').style.display = 'flex'; document.getElementById('preview-filename').textContent = file.name; } else document.getElementById('file-preview-area').style.display = 'none'; };
 window.clearFileSelection = () => { document.getElementById('file-input').value = ''; document.getElementById('file-preview-area').style.display = 'none'; };
 
 function initEmojiPicker() {
     const tabsContainer = document.getElementById('emoji-tabs');
     let first = true;
     for (const cat in emojiData) {
-        const tab = document.createElement('div');
-        tab.className = 'emoji-tab' + (first ? ' active' : '');
-        tab.textContent = cat; // Fixed: Use cat name
-        tab.onclick = () => switchEmojiTab(cat, tab);
-        tabsContainer.appendChild(tab);
-        if(first) { switchEmojiTab(cat, tab); first = false; }
+        const tab = document.createElement('div'); tab.className = 'emoji-tab' + (first ? ' active' : ''); tab.textContent = cat; tab.onclick = () => switchEmojiTab(cat, tab); tabsContainer.appendChild(tab); if(first) { switchEmojiTab(cat, tab); first = false; }
     }
 }
-function switchEmojiTab(cat, tabEl) {
-    document.querySelectorAll('.emoji-tab').forEach(t => t.classList.remove('active'));
-    tabEl.classList.add('active');
-    renderEmojis(emojiData[cat]);
-}
-function renderEmojis(list) {
-    const cont = document.getElementById('emoji-list');
-    cont.innerHTML = list.map(e => `<span onclick="addEmoji('${e}')">${e}</span>`).join('');
-}
+function switchEmojiTab(cat, tabEl) { document.querySelectorAll('.emoji-tab').forEach(t => t.classList.remove('active')); tabEl.classList.add('active'); renderEmojis(emojiData[cat]); }
+function renderEmojis(list) { const cont = document.getElementById('emoji-list'); cont.innerHTML = list.map(e => `<span onclick="addEmoji('${e}')">${e}</span>`).join(''); }
 window.filterEmojis = (val) => { if(!val) return switchEmojiTab("Smileys", document.querySelector('.emoji-tab')); };
 window.toggleEmoji = () => { const el = document.getElementById('emoji-picker'); el.style.display = el.style.display === 'none' ? 'flex' : 'none'; };
 window.addEmoji = (e) => { const input = document.getElementById('message-input'); input.value += e; input.focus(); document.getElementById('emoji-suggestions').style.display = 'none'; };
@@ -129,11 +99,7 @@ window.handleInput = (e) => {
 };
 window.addSuggestion = (em) => { const input = document.getElementById('message-input'); input.value += em + " "; document.getElementById('emoji-suggestions').style.display = 'none'; input.focus(); };
 
-window.handleKeyFileSelect = (e) => {
-    const file = e.target.files[0];
-    if(file) { document.getElementById('key-file-name').textContent = "Ключ: " + file.name; document.getElementById('btn-login').style.display = 'block'; }
-};
-
+window.handleKeyFileSelect = (e) => { const file = e.target.files[0]; if(file) { document.getElementById('key-file-name').textContent = "Ключ: " + file.name; document.getElementById('btn-login').style.display = 'block'; } };
 window.loginWithKey = async () => {
     let rawUrl = document.getElementById('server-url').value.trim().replace(/\/$/, "");
     if (!rawUrl.startsWith('http')) rawUrl = 'http://' + rawUrl;
@@ -149,19 +115,13 @@ window.loginWithKey = async () => {
         const res = await fetch(`${serverUrl}/api/login_by_file`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ fileHash: hashHex, publicKey: myPubKey }) });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error);
-        localStorage.setItem('serverUrl', serverUrl);
-        localStorage.setItem('user', JSON.stringify(data));
-        localStorage.setItem('priv_key_seed', hashHex);
-        currentUser = data;
-        connectToServer();
+        localStorage.setItem('serverUrl', serverUrl); localStorage.setItem('user', JSON.stringify(data)); localStorage.setItem('priv_key_seed', hashHex);
+        currentUser = data; connectToServer();
     } catch (e) { alert("Ошибка входа: " + e.message); }
 };
 window.logout = () => { localStorage.clear(); location.reload(); };
 
-window.previewEditAvatar = (e) => {
-    const file = e.target.files[0];
-    if (file) { const reader = new FileReader(); reader.onload = ev => document.getElementById('profile-big-avatar').src = ev.target.result; reader.readAsDataURL(file); }
-};
+window.previewEditAvatar = (e) => { const file = e.target.files[0]; if (file) { const reader = new FileReader(); reader.onload = ev => document.getElementById('profile-big-avatar').src = ev.target.result; reader.readAsDataURL(file); } };
 window.saveProfile = async () => {
     const newNick = document.getElementById('edit-nickname').value;
     const file = document.getElementById('edit-avatar-input').files[0];
@@ -172,13 +132,7 @@ window.saveProfile = async () => {
     try {
         const res = await fetch(`${serverUrl}/api/profile/update`, { method: 'POST', body: fd });
         const updatedUser = await res.json();
-        if(updatedUser) {
-            currentUser.nickname = updatedUser.nickname; currentUser.avatar = updatedUser.avatar;
-            localStorage.setItem('user', JSON.stringify(currentUser));
-            document.getElementById('my-name').textContent = currentUser.nickname;
-            document.getElementById('my-avatar').src = serverUrl + currentUser.avatar;
-            closeModal('profile-modal'); alert("Профиль обновлен");
-        }
+        if(updatedUser) { currentUser.nickname = updatedUser.nickname; currentUser.avatar = updatedUser.avatar; localStorage.setItem('user', JSON.stringify(currentUser)); document.getElementById('my-name').textContent = currentUser.nickname; document.getElementById('my-avatar').src = serverUrl + currentUser.avatar; closeModal('profile-modal'); alert("Профиль обновлен"); }
     } catch(e) { alert("Ошибка обновления"); }
 };
 
@@ -232,7 +186,6 @@ function connectToServer() {
 
     socket.on('message_updated', (data) => { document.querySelectorAll('.message').forEach(el => { if(el.dataset.id == data.id) el.querySelector('p').innerHTML = data.content.replace(/\n/g, '<br>') + ' <span class="msg-edited">(изм.)</span>'; }); });
     socket.on('message_deleted', (data) => { document.querySelectorAll('.message').forEach(el => { if(el.dataset.id == data.id) el.closest('.msg-row').remove(); }); });
-    
     socket.on('history_loaded', (msgs) => { 
         document.getElementById('messages-container').innerHTML = ''; 
         msgs.forEach(renderMessage); 
@@ -243,7 +196,6 @@ function connectToServer() {
         });
         scrollToBottom(); 
     });
-
     socket.on('call_incoming', (data) => { if(currentPeer || incomingCallData) { socket.emit('call_busy'); return; } incomingCallData = data; document.getElementById('incoming-call-modal').style.display = 'flex'; document.getElementById('caller-name').textContent = data.name; });
     socket.on('call_accepted', (signal) => { if(currentPeer) currentPeer.signal(signal); });
     socket.on('call_busy', () => { alert("Абонент занят"); endCallUI(); });
@@ -258,37 +210,16 @@ function connectToServer() {
             const div = document.createElement('div');
             const avatar = u.avatar ? serverUrl + u.avatar : 'https://placehold.co/40';
             div.className = 'user-list-item';
-            div.innerHTML = `
-                <input type="checkbox" id="user-${u.id}" value="${u.id}" style="margin-right:10px;">
-                <img src="${avatar}">
-                <div class="info">
-                    <div class="name">${u.nickname}</div>
-                    <div class="status">@${u.username}</div>
-                </div>
-            `;
-            div.onclick = (e) => {
-                if(e.target.tagName !== 'INPUT') {
-                    const cb = div.querySelector('input');
-                    cb.checked = !cb.checked;
-                }
-            };
+            div.innerHTML = `<input type="checkbox" id="user-${u.id}" value="${u.id}" style="margin-right:10px;"><img src="${avatar}"><div class="info"><div class="name">${u.nickname}</div><div class="status">@${u.username}</div></div>`;
+            div.onclick = (e) => { if(e.target.tagName !== 'INPUT') { const cb = div.querySelector('input'); cb.checked = !cb.checked; } };
             list.appendChild(div);
         });
-        
         const select = document.getElementById('group-add-select');
         select.innerHTML = '';
-        users.forEach(u => {
-            const opt = document.createElement('option');
-            opt.value = u.id;
-            opt.text = u.nickname;
-            select.appendChild(opt);
-        });
+        users.forEach(u => { const opt = document.createElement('option'); opt.value = u.id; opt.text = u.nickname; select.appendChild(opt); });
     });
 
-    socket.on('group_created', (group) => {
-        closeModal('create-group-modal');
-        openChat({ id: group.id, name: group.name, avatar: group.avatar, creator_id: group.creator_id }, 'group');
-    });
+    socket.on('group_created', (group) => { closeModal('create-group-modal'); openChat({ id: group.id, name: group.name, avatar: group.avatar, creator_id: group.creator_id }, 'group'); });
 
     socket.on('group_details_loaded', ({ group, members }) => {
         currentGroupDetails = { group, members };
@@ -299,66 +230,30 @@ function connectToServer() {
         
         if(isAdmin) {
             document.getElementById('group-info-name').style.display = 'none';
-            const nameInput = document.getElementById('group-info-name-input');
-            nameInput.style.display = 'block';
-            nameInput.value = group.name;
-            document.getElementById('group-edit-btn').style.display = 'flex';
-            document.getElementById('save-group-btn').style.display = 'block';
+            const nameInput = document.getElementById('group-info-name-input'); nameInput.style.display = 'block'; nameInput.value = group.name;
+            document.getElementById('group-edit-btn').style.display = 'flex'; document.getElementById('save-group-btn').style.display = 'block';
         } else {
-            document.getElementById('group-info-name').style.display = 'block';
-            document.getElementById('group-info-name-input').style.display = 'none';
-            document.getElementById('group-edit-btn').style.display = 'none';
-            document.getElementById('save-group-btn').style.display = 'none';
+            document.getElementById('group-info-name').style.display = 'block'; document.getElementById('group-info-name-input').style.display = 'none';
+            document.getElementById('group-edit-btn').style.display = 'none'; document.getElementById('save-group-btn').style.display = 'none';
         }
 
-        const list = document.getElementById('group-members-list');
-        list.innerHTML = '';
+        const list = document.getElementById('group-members-list'); list.innerHTML = '';
         members.forEach(m => {
             const div = document.createElement('div');
             const avatar = m.avatar ? serverUrl + m.avatar : 'https://placehold.co/40';
-            div.className = 'user-list-item';
-            div.style.cursor = 'default';
-            let kickBtn = '';
-            if(isAdmin && m.id !== currentUser.id) {
-                kickBtn = `<button class="kick-btn" onclick="removeMember(${group.id}, ${m.id})"><i class="fas fa-times"></i></button>`;
-            }
-            div.innerHTML = `
-                <img src="${avatar}">
-                <div class="info">
-                    <div class="name">${m.nickname}</div>
-                    <div class="status">@${m.username}</div>
-                </div>
-                ${kickBtn}
-            `;
-            if(m.id !== currentUser.id) {
-                div.onclick = (e) => { if(!e.target.closest('.kick-btn')) openUserProfile(m); };
-                div.style.cursor = 'pointer';
-            }
+            div.className = 'user-list-item'; div.style.cursor = 'default';
+            let kickBtn = ''; if(isAdmin && m.id !== currentUser.id) kickBtn = `<button class="kick-btn" onclick="removeMember(${group.id}, ${m.id})"><i class="fas fa-times"></i></button>`;
+            div.innerHTML = `<img src="${avatar}"><div class="info"><div class="name">${m.nickname}</div><div class="status">@${m.username}</div></div>${kickBtn}`;
+            if(m.id !== currentUser.id) { div.onclick = (e) => { if(!e.target.closest('.kick-btn')) openUserProfile(m); }; div.style.cursor = 'pointer'; }
             list.appendChild(div);
         });
         document.getElementById('group-info-modal').style.display = 'flex';
     });
 
-    socket.on('group_updated', ({ groupId }) => {
-        if(currentChat && currentChat.id === groupId && currentChat.type === 'group') {
-            socket.emit('get_group_details', groupId);
-            if(currentGroupDetails) {
-                document.getElementById('chat-name').textContent = currentGroupDetails.group.name;
-                document.getElementById('chat-avatar').src = currentGroupDetails.group.avatar ? serverUrl + currentGroupDetails.group.avatar : 'https://placehold.co/50';
-            }
-        }
-        socket.emit('authenticate', currentUser.id);
-    });
-
+    socket.on('group_updated', ({ groupId }) => { if(currentChat && currentChat.id === groupId && currentChat.type === 'group') socket.emit('get_group_details', groupId); socket.emit('authenticate', currentUser.id); });
     socket.on('message_readers_list', (users) => {
-        const list = document.getElementById('readers-list');
-        list.innerHTML = '';
-        users.forEach(u => {
-            const div = document.createElement('div');
-            div.className = 'user-list-item';
-            div.innerHTML = `<img src="${u.avatar ? serverUrl + u.avatar : 'https://placehold.co/40'}"><div class="name">${u.nickname}</div>`;
-            list.appendChild(div);
-        });
+        const list = document.getElementById('readers-list'); list.innerHTML = '';
+        users.forEach(u => { const div = document.createElement('div'); div.className = 'user-list-item'; div.innerHTML = `<img src="${u.avatar ? serverUrl + u.avatar : 'https://placehold.co/40'}"><div class="name">${u.nickname}</div>`; list.appendChild(div); });
         document.getElementById('readers-modal').style.display = 'flex';
     });
 }
@@ -396,68 +291,31 @@ window.handleHeaderClick = () => {
     }
 };
 
-window.previewGroupAvatar = (e) => {
-    const file = e.target.files[0];
-    if(file) {
-        const reader = new FileReader();
-        reader.onload = ev => document.getElementById('new-group-avatar-preview').src = ev.target.result;
-        reader.readAsDataURL(file);
-    }
-};
-
+window.previewGroupAvatar = (e) => { const file = e.target.files[0]; if(file) { const reader = new FileReader(); reader.onload = ev => document.getElementById('new-group-avatar-preview').src = ev.target.result; reader.readAsDataURL(file); } };
 window.createGroup = async () => {
     const name = document.getElementById('new-group-name').value;
     const checks = document.querySelectorAll('#group-candidates-list input:checked');
     if(!name) return alert("Введите имя группы");
-    
     const fileInput = document.getElementById('new-group-avatar-input');
     let avatarUrl = null;
-    if(fileInput.files[0]) {
-        const fd = new FormData();
-        fd.append('file', fileInput.files[0]);
-        try {
-            const res = await fetch(`${serverUrl}/api/upload`, { method: 'POST', body: fd });
-            const data = await res.json();
-            avatarUrl = data.url;
-        } catch(e) {}
-    }
-
+    if(fileInput.files[0]) { const fd = new FormData(); fd.append('file', fileInput.files[0]); try { const res = await fetch(`${serverUrl}/api/upload`, { method: 'POST', body: fd }); const data = await res.json(); avatarUrl = data.url; } catch(e) {} }
     const memberIds = Array.from(checks).map(c => parseInt(c.value));
     socket.emit('create_group', { name, memberIds, creatorId: currentUser.id, avatar: avatarUrl });
 };
-
 window.updateGroupAvatar = (e) => { const file = e.target.files[0]; if(file) { const reader = new FileReader(); reader.onload = ev => document.getElementById('group-info-avatar').src = ev.target.result; reader.readAsDataURL(file); } };
 window.saveGroupSettings = async () => {
     const name = document.getElementById('group-info-name-input').value;
     const fileInput = document.getElementById('edit-group-avatar-input');
     const fd = new FormData();
-    fd.append('groupId', currentGroupDetails.group.id);
-    fd.append('name', name);
+    fd.append('groupId', currentGroupDetails.group.id); fd.append('name', name);
     if(fileInput.files[0]) fd.append('avatar', fileInput.files[0]);
-    
     await fetch(`${serverUrl}/api/group/update`, { method: 'POST', body: fd });
     socket.emit('notify_group_update', currentGroupDetails.group.id);
     socket.emit('get_group_details', currentGroupDetails.group.id);
 };
-
-window.openCreateGroupModal = () => { 
-    document.getElementById('create-group-modal').style.display = 'flex'; 
-    socket.emit('get_contacts_for_group', currentUser.id); 
-};
-
-window.addMemberToGroup = () => {
-    const select = document.getElementById('group-add-select');
-    const userId = parseInt(select.value);
-    if(currentGroupDetails && userId) {
-        socket.emit('add_group_member', { groupId: currentGroupDetails.group.id, userId });
-    }
-};
-
-window.removeMember = (groupId, userId) => {
-    if(confirm("Удалить участника?")) {
-        socket.emit('remove_group_member', { groupId, userId });
-    }
-};
+window.openCreateGroupModal = () => { document.getElementById('create-group-modal').style.display = 'flex'; socket.emit('get_contacts_for_group', currentUser.id); };
+window.addMemberToGroup = () => { const select = document.getElementById('group-add-select'); const userId = parseInt(select.value); if(currentGroupDetails && userId) socket.emit('add_group_member', { groupId: currentGroupDetails.group.id, userId }); };
+window.removeMember = (groupId, userId) => { if(confirm("Удалить участника?")) socket.emit('remove_group_member', { groupId, userId }); };
 
 function openChat(obj, type) {
     if(!type) type = obj.name ? 'group' : 'user';
@@ -467,120 +325,74 @@ function openChat(obj, type) {
     document.getElementById('chat-name').textContent = obj.nickname || obj.name;
     const ava = document.getElementById('chat-avatar');
     ava.src = obj.avatar ? serverUrl + obj.avatar : 'https://placehold.co/50';
-    
-    const oldIcon = ava.parentNode.querySelector('.header-deleted-icon');
-    if(oldIcon) oldIcon.remove();
-
-    if(obj.is_deleted) {
-        const icon = document.createElement('div');
-        icon.className = 'header-deleted-icon';
-        icon.innerHTML = '<i class="fas fa-skull"></i>';
-        ava.parentNode.appendChild(icon);
-    }
-    
+    const oldIcon = ava.parentNode.querySelector('.header-deleted-icon'); if(oldIcon) oldIcon.remove();
+    if(obj.is_deleted) { const icon = document.createElement('div'); icon.className = 'header-deleted-icon'; icon.innerHTML = '<i class="fas fa-skull"></i>'; ava.parentNode.appendChild(icon); }
     if(type === 'user') document.getElementById('enc-status').style.display = obj.public_key ? 'block' : 'none';
     else document.getElementById('enc-status').style.display = 'none';
-
     document.getElementById('chat-status').textContent = '';
-
     renderSidebar(); 
     const params = type === 'group' ? { groupId: obj.id } : { userId: currentUser.id, partnerId: obj.id };
     socket.emit('get_history', params);
     window.clearFileSelection();
     cancelEdit();
 }
-
-window.closeChat = (e) => {
-    if(e) e.stopPropagation(); 
-    currentChat = null;
-    document.getElementById('chat-interface').style.display = 'none';
-    document.getElementById('chat-placeholder').style.display = 'flex';
-    renderSidebar();
-};
+window.closeChat = (e) => { if(e) e.stopPropagation(); currentChat = null; document.getElementById('chat-interface').style.display = 'none'; document.getElementById('chat-placeholder').style.display = 'flex'; renderSidebar(); };
 
 function renderMessage(msg) {
     let contentToShow = msg.content;
-    
-    if (msg.is_encrypted && currentChat.type === 'user') {
-        const secret = getSharedSecret(currentChat.public_key);
-        contentToShow = decryptText(msg.content, secret);
-    } else if (msg.is_encrypted) {
-        contentToShow = "🔒 Сообщение зашифровано (Ключ недоступен)";
-    }
+    if (msg.is_encrypted && currentChat.type === 'user') { const secret = getSharedSecret(currentChat.public_key); contentToShow = decryptText(msg.content, secret); }
+    else if (msg.is_encrypted) { contentToShow = "🔒 Сообщение зашифровано (Ключ недоступен)"; }
 
     let statusIcon = '<i class="far fa-clock status-icon"></i>';
     if (msg.read_by && msg.read_by.length > 1) statusIcon = '<i class="fas fa-check-double status-icon read"></i>';
     else if (msg.id) statusIcon = '<i class="fas fa-check status-icon"></i>';
 
-    const div = document.createElement('div');
-    const sender = msg.sender_id || msg.senderId;
-    const isMe = sender === currentUser.id;
-    
-    const row = document.createElement('div');
-    row.className = `msg-row ${isMe ? 'sent' : 'received'}`;
+    const isMe = msg.sender_id === currentUser.id;
+    const container = document.getElementById('messages-container');
+    const lastRow = container.lastElementChild;
+    let isConsecutive = false;
+    if (lastRow && lastRow.dataset.senderId == msg.sender_id) isConsecutive = true;
+
+    const row = document.createElement('div'); 
+    row.className = `msg-row ${isMe ? 'sent' : 'received'} ${isConsecutive ? 'consecutive' : ''}`;
+    row.dataset.senderId = msg.sender_id;
 
     if (!isMe) {
-        const img = document.createElement('img');
-        img.className = 'msg-avatar';
+        const img = document.createElement('img'); img.className = 'msg-avatar';
         img.src = msg.senderAvatar ? serverUrl + msg.senderAvatar : 'https://placehold.co/40';
-        img.onclick = () => openUserProfile({ id: msg.sender_id, nickname: msg.senderName || 'User', avatar: msg.senderAvatar, username: '?' });
+        img.onclick = () => openUserProfile({ id: msg.sender_id, nickname: msg.senderName || 'User', avatar: msg.senderAvatar });
         row.appendChild(img);
     }
 
-    const bubble = document.createElement('div');
-    bubble.className = 'message';
-    bubble.dataset.id = msg.id;
-    bubble.dataset.content = contentToShow;
-    
-    bubble.oncontextmenu = (e) => {
-        e.preventDefault();
-        selectedMessageId = msg.id;
-        const menu = document.getElementById('context-menu');
-        const readersBtn = document.getElementById('show-readers-btn');
-        readersBtn.style.display = (currentChat.type === 'group') ? 'block' : 'none';
-        menu.style.display = 'block'; menu.style.left = e.pageX + 'px'; menu.style.top = e.pageY + 'px';
+    const bubble = document.createElement('div'); bubble.className = 'message'; bubble.dataset.id = msg.id; bubble.dataset.content = contentToShow;
+    bubble.oncontextmenu = (e) => { 
+        e.preventDefault(); selectedMessageId = msg.id; const menu = document.getElementById('context-menu'); 
+        const readersBtn = document.getElementById('show-readers-btn'); readersBtn.style.display = (currentChat.type === 'group') ? 'block' : 'none'; 
+        const menuWidth = 150; const menuHeight = 150; let x = e.pageX; let y = e.pageY;
+        if(x + menuWidth > window.innerWidth) x -= menuWidth; if(y + menuHeight > window.innerHeight) y -= menuHeight;
+        menu.style.display = 'block'; menu.style.left = x + 'px'; menu.style.top = y + 'px'; 
     };
 
     let html = '';
-    if (currentChat.type === 'group' && !isMe) html += `<span class="msg-name">${msg.senderName || 'User'}</span>`;
+    // Show name only if group, not me, and not consecutive
+    if (currentChat.type === 'group' && !isMe && !isConsecutive) html += `<span class="msg-name">${msg.senderName || 'User'}</span>`;
     
-    if(msg.type === 'text') {
-        html += `<p>${contentToShow.replace(/\n/g, '<br>')}${msg.is_edited ? ' <span class="msg-edited">(изм.)</span>' : ''}</p>`;
-    } else if(msg.type === 'image') {
-        html += `<img src="${serverUrl + msg.file_url}" onclick="window.open('${serverUrl + msg.file_url}')">`;
-    } else {
-        const fileName = msg.file_name || 'Файл';
-        const fileSize = msg.file_size ? formatBytes(msg.file_size) : '';
-        html += `
-            <div class="file-card-box">
-                <div class="file-icon"><i class="fas fa-file"></i></div>
-                <div class="file-info">
-                    <span class="file-name">${fileName}</span>
-                    <span class="file-meta">${fileSize}</span>
-                </div>
-                <a href="${serverUrl + msg.file_url}" target="_blank" class="file-download-btn"><i class="fas fa-download"></i></a>
-            </div>`;
-    }
-
+    if(msg.type === 'text') html += `<p>${contentToShow.replace(/\n/g, '<br>')}${msg.is_edited ? ' <span class="msg-edited">(изм.)</span>' : ''}</p>`;
+    else if(msg.type === 'image') html += `<img src="${serverUrl + msg.file_url}" onclick="window.open('${serverUrl + msg.file_url}')">`;
+    else { html += `<div class="file-card-box"><div class="file-icon"><i class="fas fa-file"></i></div><div class="file-info"><span class="file-name">${msg.file_name}</span><span class="file-meta">${formatBytes(msg.file_size)}</span></div><a href="${serverUrl + msg.file_url}" target="_blank" class="file-download-btn"><i class="fas fa-download"></i></a></div>`; }
     const time = new Date(msg.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
-    html += `<div class="msg-meta">${time} ${isMe ? statusIcon : ''}</div>`;
-    html += `<div class="reactions-container"></div>`;
-
+    html += `<div class="msg-meta">${time} ${isMe ? statusIcon : ''}</div><div class="reactions-container"></div>`;
     bubble.innerHTML = html;
-    
     renderReactions(bubble, msg.reactions);
-
     row.appendChild(bubble);
-    document.getElementById('messages-container').appendChild(row);
+    container.appendChild(row);
     scrollToBottom();
 }
 
 function renderReactions(msgElement, reactions) {
-    const container = msgElement.querySelector('.reactions-container');
-    container.innerHTML = '';
+    const container = msgElement.querySelector('.reactions-container'); container.innerHTML = '';
     for (const [emoji, userIds] of Object.entries(reactions)) {
-        const tag = document.createElement('div');
-        tag.className = 'reaction-tag';
+        const tag = document.createElement('div'); tag.className = 'reaction-tag';
         if (userIds.includes(currentUser.id)) tag.classList.add('active');
         tag.innerHTML = `${emoji} ${userIds.length}`;
         tag.onclick = () => sendReaction(emoji);
@@ -590,58 +402,23 @@ function renderReactions(msgElement, reactions) {
 }
 
 window.sendReaction = (emoji) => {
-    const msgId = selectedMessageId;
-    if(!msgId) return;
+    const msgId = selectedMessageId; if(!msgId) return;
     document.getElementById('context-menu').style.display = 'none';
-    socket.emit('add_reaction', { 
-        messageId: msgId, 
-        emoji, 
-        userId: currentUser.id, 
-        groupId: currentChat.type === 'group' ? currentChat.id : null, 
-        receiverId: currentChat.type === 'user' ? currentChat.id : null 
-    });
+    socket.emit('add_reaction', { messageId: msgId, emoji, userId: currentUser.id, groupId: currentChat.type === 'group' ? currentChat.id : null, receiverId: currentChat.type === 'user' ? currentChat.id : null });
 };
-
-window.showReaders = () => {
-    document.getElementById('context-menu').style.display = 'none';
-    socket.emit('get_message_readers', selectedMessageId);
-};
-
+window.showReaders = () => { document.getElementById('context-menu').style.display = 'none'; socket.emit('get_message_readers', selectedMessageId); };
 window.openUserProfile = (user) => {
     document.getElementById('view-profile-avatar').src = user.avatar ? serverUrl + user.avatar : 'https://placehold.co/100';
     document.getElementById('view-profile-nickname').textContent = user.nickname;
-    document.getElementById('view-profile-username').textContent = ''; 
-    const btn = document.getElementById('btn-write-msg');
-    btn.onclick = () => {
+    document.getElementById('btn-write-msg').onclick = () => {
         closeModal('view-profile-modal');
         openChat({ id: user.id, name: user.nickname, avatar: user.avatar, type: 'user' }, 'user');
     };
     document.getElementById('view-profile-modal').style.display = 'flex';
 };
 
-window.copyUsername = () => {
-    const fullId = "@" + currentUser.username; 
-    navigator.clipboard.writeText(fullId).then(() => {
-        showToast("Ваш ID скопирован в буфер обмена");
-    }).catch(err => {
-        console.error('Ошибка копирования: ', err);
-    });
-};
-
-function showToast(message) {
-    const oldToast = document.querySelector('.discord-toast');
-    if (oldToast) oldToast.remove();
-    const toast = document.createElement('div');
-    toast.className = 'discord-toast';
-    toast.textContent = message;
-    document.body.appendChild(toast);
-    void toast.offsetWidth; 
-    toast.classList.add('show');
-    setTimeout(() => {
-        toast.classList.remove('show');
-        setTimeout(() => toast.remove(), 300);
-    }, 2000);
-}
+window.copyUsername = () => { const fullId = "@" + currentUser.username; navigator.clipboard.writeText(fullId).then(() => { showToast("Ваш ID скопирован в буфер обмена"); }).catch(err => { console.error('Ошибка копирования: ', err); }); };
+function showToast(message) { const oldToast = document.querySelector('.discord-toast'); if (oldToast) oldToast.remove(); const toast = document.createElement('div'); toast.className = 'discord-toast'; toast.textContent = message; document.body.appendChild(toast); void toast.offsetWidth; toast.classList.add('show'); setTimeout(() => { toast.classList.remove('show'); setTimeout(() => toast.remove(), 300); }, 2000); }
 
 function scrollToBottom() { const c = document.getElementById('messages-container'); c.scrollTop = c.scrollHeight; }
 document.onclick = () => document.getElementById('context-menu').style.display = 'none';
