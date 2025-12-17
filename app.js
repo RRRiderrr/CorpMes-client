@@ -210,16 +210,37 @@ function connectToServer() {
             const div = document.createElement('div');
             const avatar = u.avatar ? serverUrl + u.avatar : 'https://placehold.co/40';
             div.className = 'user-list-item';
-            div.innerHTML = `<input type="checkbox" id="user-${u.id}" value="${u.id}" style="margin-right:10px;"><img src="${avatar}"><div class="info"><div class="name">${u.nickname}</div><div class="status">@${u.username}</div></div>`;
-            div.onclick = (e) => { if(e.target.tagName !== 'INPUT') { const cb = div.querySelector('input'); cb.checked = !cb.checked; } };
+            div.innerHTML = `
+                <input type="checkbox" id="user-${u.id}" value="${u.id}" style="margin-right:10px;">
+                <img src="${avatar}">
+                <div class="info">
+                    <div class="name">${u.nickname}</div>
+                    <div class="status">@${u.username}</div>
+                </div>
+            `;
+            div.onclick = (e) => {
+                if(e.target.tagName !== 'INPUT') {
+                    const cb = div.querySelector('input');
+                    cb.checked = !cb.checked;
+                }
+            };
             list.appendChild(div);
         });
+        
         const select = document.getElementById('group-add-select');
         select.innerHTML = '';
-        users.forEach(u => { const opt = document.createElement('option'); opt.value = u.id; opt.text = u.nickname; select.appendChild(opt); });
+        users.forEach(u => {
+            const opt = document.createElement('option');
+            opt.value = u.id;
+            opt.text = u.nickname;
+            select.appendChild(opt);
+        });
     });
 
-    socket.on('group_created', (group) => { closeModal('create-group-modal'); openChat({ id: group.id, name: group.name, avatar: group.avatar, creator_id: group.creator_id }, 'group'); });
+    socket.on('group_created', (group) => {
+        closeModal('create-group-modal');
+        openChat({ id: group.id, name: group.name, avatar: group.avatar, creator_id: group.creator_id }, 'group');
+    });
 
     socket.on('group_details_loaded', ({ group, members }) => {
         currentGroupDetails = { group, members };
@@ -360,7 +381,7 @@ function renderMessage(msg) {
     if (!isMe) {
         const img = document.createElement('img'); img.className = 'msg-avatar';
         img.src = msg.senderAvatar ? serverUrl + msg.senderAvatar : 'https://placehold.co/40';
-        img.onclick = () => openUserProfile({ id: msg.sender_id, nickname: msg.senderName || 'User', avatar: msg.senderAvatar });
+        img.onclick = () => openUserProfile({ id: msg.sender_id, nickname: msg.senderName || 'User', avatar: msg.senderAvatar, username: '?' });
         row.appendChild(img);
     }
 
@@ -449,3 +470,5 @@ window.toggleCam = () => { if(!localStream) return; const track = localStream.ge
 window.endCall = () => { const partnerId = currentChat ? currentChat.id : (incomingCallData ? incomingCallData.from : null); if(partnerId) socket.emit('end_call', { to: partnerId }); if(currentPeer) currentPeer.destroy(); if(localStream) localStream.getTracks().forEach(t => t.stop()); currentPeer = null; localStream = null; incomingCallData = null; document.getElementById('active-call-modal').style.display = 'none'; document.getElementById('incoming-call-modal').style.display = 'none'; };
 window.openProfileSettings = () => { document.getElementById('profile-modal').style.display = 'flex'; document.getElementById('edit-nickname').value = currentUser.nickname; document.getElementById('profile-big-username').textContent = '@' + currentUser.username; const avatarSrc = currentUser.avatar ? serverUrl + currentUser.avatar : 'https://placehold.co/100'; document.getElementById('profile-big-avatar').src = avatarSrc; };
 function formatBytes(bytes, decimals = 2) { if (!+bytes) return '0 B'; const k = 1024; const dm = decimals < 0 ? 0 : decimals; const sizes = ['B', 'KB', 'MB', 'GB']; const i = Math.floor(Math.log(bytes) / Math.log(k)); return `${parseFloat((bytes / Math.pow(k, i)).toFixed(dm))} ${sizes[i]}`; }
+window.copyUsername = () => { const fullId = "@" + currentUser.username; navigator.clipboard.writeText(fullId).then(() => { showToast("Ваш ID скопирован в буфер обмена"); }).catch(err => { console.error('Ошибка копирования: ', err); }); };
+function showToast(message) { const oldToast = document.querySelector('.discord-toast'); if (oldToast) oldToast.remove(); const toast = document.createElement('div'); toast.className = 'discord-toast'; toast.textContent = message; document.body.appendChild(toast); void toast.offsetWidth; toast.classList.add('show'); setTimeout(() => { toast.classList.remove('show'); setTimeout(() => toast.remove(), 300); }, 2000); }
