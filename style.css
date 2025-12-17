@@ -42,7 +42,8 @@ input { width: 100%; padding: 12px; background: #2c2c2c; border: 1px solid #444;
 .chat-placeholder { flex: 1; display: flex; flex-direction: column; justify-content: center; align-items: center; color: #555; font-size: 18px; }
 .chat-placeholder i { font-size: 60px; margin-bottom: 20px; }
 .chat-interface { flex: 1; display: flex; flex-direction: column; height: 100%; }
-.chat-header { padding: 10px 20px; background: var(--sidebar); display: flex; align-items: center; gap: 15px; border-bottom: 1px solid #000; position: relative; }
+.chat-header { padding: 10px 20px; background: var(--sidebar); display: flex; align-items: center; gap: 15px; border-bottom: 1px solid #000; position: relative; cursor: pointer; transition: background 0.2s; }
+.chat-header:hover { background: #2a2a2a; }
 .chat-header img { width: 40px; height: 40px; border-radius: 50%; object-fit: cover; }
 .chat-title { flex: 1; font-weight: bold; }
 .call-btn { background: transparent; border: none; color: var(--primary); font-size: 20px; cursor: pointer; }
@@ -99,6 +100,27 @@ textarea { flex: 1; background: #2c2c2c; border: none; color: #fff; padding: 10p
 .modal { display: none; position: fixed; top:0; left:0; width:100%; height:100%; background: rgba(0,0,0,0.8); z-index: 100; justify-content: center; align-items: center; }
 .modal-content { background: #222; padding: 30px; border-radius: 12px; text-align: center; width: 340px; position: relative; display: flex; flex-direction: column; align-items: center; }
 
+/* STYLES FOR CANDIDATE LIST (CREATE GROUP) & MEMBER LIST (GROUP INFO) */
+.user-list-item {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px; border-radius: 8px; width: 100%;
+    box-sizing: border-box; cursor: pointer;
+    transition: 0.2s;
+}
+.user-list-item:hover { background: #333; }
+.user-list-item img { width: 40px; height: 40px; border-radius: 50%; object-fit: cover; }
+.user-list-item .info { text-align: left; flex: 1; }
+.user-list-item .name { font-weight: bold; color: #fff; font-size: 14px; }
+.user-list-item .status { font-size: 11px; color: #888; }
+.user-list-item input[type="checkbox"] { width: 18px; height: 18px; cursor: pointer; margin: 0; }
+
+/* Кнопка удаления в списке участников */
+.kick-btn {
+    background: none; border: none; color: #ff5555;
+    cursor: pointer; padding: 5px; opacity: 0.6;
+}
+.kick-btn:hover { opacity: 1; }
+
 .call-popup .pulsing-avatar { width: 100px; height: 100px; border-radius: 50%; margin-bottom: 20px; animation: pulse 1.5s infinite; object-fit: cover; }
 .call-actions { display: flex; justify-content: center; gap: 30px; margin-top: 20px; }
 .btn-decline { background: #f44336; width: 60px; height: 60px; border-radius: 50%; border: none; color: white; font-size: 24px; cursor: pointer; }
@@ -124,29 +146,12 @@ select { background: #333; color: #fff; border: 1px solid #555; padding: 5px; bo
 .danger-btn { width: 100%; padding: 10px; background: #f44336; color: white; border: none; border-radius: 5px; margin-top: 10px; cursor: pointer; }
 .close { position: absolute; top: 10px; right: 15px; font-size: 24px; cursor: pointer; }
 .checklist { text-align: left; max-height: 250px; overflow-y: auto; margin: 10px 0; background: #333; padding: 10px; border-radius: 5px; width: 100%; }
-.check-item { padding: 8px; border-bottom: 1px solid #444; display: flex; align-items: center; gap: 10px; }
-.check-item label { flex: 1; cursor: pointer; }
-
-/* Discord-Style Notification */
 .discord-toast {
-    position: fixed;
-    bottom: 30px;
-    left: 50%;
-    transform: translateX(-50%);
-    background-color: var(--discord-green);
-    color: white;
-    padding: 10px 20px;
-    border-radius: 5px;
-    font-weight: bold;
-    font-size: 14px;
-    box-shadow: 0 4px 10px rgba(0,0,0,0.3);
-    opacity: 0;
-    transition: opacity 0.3s, transform 0.3s;
-    z-index: 2000;
-    pointer-events: none;
-    margin-bottom: -10px;
+    position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%);
+    background-color: var(--discord-green); color: white;
+    padding: 10px 20px; border-radius: 5px; font-weight: bold; font-size: 14px;
+    box-shadow: 0 4px 10px rgba(0,0,0,0.3); opacity: 0;
+    transition: opacity 0.3s, transform 0.3s; z-index: 2000;
+    pointer-events: none; margin-bottom: -10px;
 }
-.discord-toast.show {
-    opacity: 1;
-    margin-bottom: 0;
-}
+.discord-toast.show { opacity: 1; margin-bottom: 0; }
