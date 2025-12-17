@@ -58,7 +58,7 @@
             </div>
 
             <div class="chat-interface" id="chat-interface" style="display:none;">
-                <div class="chat-header" id="chat-header-clickable" onclick="handleHeaderClick()">
+                <div class="chat-header" onclick="handleHeaderClick()">
                     <button class="back-btn" onclick="closeChat(event)"><i class="fas fa-arrow-left"></i></button>
                     <img id="chat-avatar" src="">
                     <div class="chat-title">
@@ -168,8 +168,8 @@
             
             <div id="group-admin-tools" style="width:100%; display:none; margin-bottom:15px;">
                 <p style="text-align:left; color:#aaa; font-size:12px;">Добавить участника:</p>
-                <select id="group-add-select" style="width:100%; margin-bottom:5px;"></select>
-                <button onclick="addMemberToGroup()" class="primary-btn" style="padding:8px; font-size:12px;">Добавить</button>
+                <select id="group-add-select" style="width:100%; margin-bottom:5px; padding:8px; background:#333; color:#fff; border:1px solid #444; border-radius:5px;"></select>
+                <button onclick="addMemberToGroup()" class="primary-btn" style="padding:8px; font-size:12px; margin-top:5px;">Добавить</button>
             </div>
 
             <p style="text-align:left; color:#aaa; font-size:12px; width:100%;">Участники:</p>
