@@ -99,7 +99,7 @@ function initEmojiPicker() {
     for (const cat in emojiData) {
         const tab = document.createElement('div');
         tab.className = 'emoji-tab' + (first ? ' active' : '');
-        tab.textContent = emojiData[cat][0];
+        tab.textContent = cat; // Fixed: Use cat name
         tab.onclick = () => switchEmojiTab(cat, tab);
         tabsContainer.appendChild(tab);
         if(first) { switchEmojiTab(cat, tab); first = false; }
@@ -194,6 +194,7 @@ function connectToServer() {
     socket.on('sidebar_update', (chats) => { sidebarChats = chats; renderSidebar(); });
     socket.on('search_results', (users) => renderSidebar(users, true));
     socket.on('force_logout', () => window.logout());
+    
     socket.on('user_deleted_status', (data) => {
         if(currentChat && currentChat.id === data.id && currentChat.type === 'user') {
             document.getElementById('chat-status').textContent = 'Удален';
@@ -205,14 +206,44 @@ function connectToServer() {
         }
         socket.emit('authenticate', currentUser.id);
     });
+    
     socket.on('user_revived', () => socket.emit('authenticate', currentUser.id));
+    
     socket.on('new_message', (msg) => {
-        if ((msg.group_id && currentChat?.type === 'group' && currentChat.id === msg.group_id) || (!msg.group_id && currentChat?.type === 'user' && (msg.sender_id === currentChat.id || msg.sender_id === currentUser.id))) renderMessage(msg);
-        else socket.emit('authenticate', currentUser.id);
+        if ((msg.group_id && currentChat?.type === 'group' && currentChat.id === msg.group_id) || (!msg.group_id && currentChat?.type === 'user' && (msg.sender_id === currentChat.id || msg.sender_id === currentUser.id))) {
+            renderMessage(msg);
+            if(msg.sender_id !== currentUser.id) socket.emit('mark_read', { messageId: msg.id, userId: currentUser.id, groupId: msg.group_id, senderId: msg.sender_id });
+        }
+        socket.emit('authenticate', currentUser.id);
     });
+
+    socket.on('message_read_update', (data) => {
+        const el = document.querySelector(`.message[data-id="${data.id}"]`);
+        if(el) {
+            const icon = el.closest('.msg-row').querySelector('.status-icon');
+            if(icon) icon.className = 'status-icon fas fa-check-double read';
+        }
+    });
+
+    socket.on('reaction_update', (data) => {
+        const el = document.querySelector(`.message[data-id="${data.id}"]`);
+        if(el) renderReactions(el, data.reactions);
+    });
+
     socket.on('message_updated', (data) => { document.querySelectorAll('.message').forEach(el => { if(el.dataset.id == data.id) el.querySelector('p').innerHTML = data.content.replace(/\n/g, '<br>') + ' <span class="msg-edited">(изм.)</span>'; }); });
-    socket.on('message_deleted', (data) => { document.querySelectorAll('.message').forEach(el => { if(el.dataset.id == data.id) el.remove(); }); });
-    socket.on('history_loaded', (msgs) => { document.getElementById('messages-container').innerHTML = ''; msgs.forEach(renderMessage); scrollToBottom(); });
+    socket.on('message_deleted', (data) => { document.querySelectorAll('.message').forEach(el => { if(el.dataset.id == data.id) el.closest('.msg-row').remove(); }); });
+    
+    socket.on('history_loaded', (msgs) => { 
+        document.getElementById('messages-container').innerHTML = ''; 
+        msgs.forEach(renderMessage); 
+        msgs.forEach(m => {
+            if(m.sender_id !== currentUser.id && !m.read_by.includes(currentUser.id)) {
+                socket.emit('mark_read', { messageId: m.id, userId: currentUser.id, groupId: m.group_id, senderId: m.sender_id });
+            }
+        });
+        scrollToBottom(); 
+    });
+
     socket.on('call_incoming', (data) => { if(currentPeer || incomingCallData) { socket.emit('call_busy'); return; } incomingCallData = data; document.getElementById('incoming-call-modal').style.display = 'flex'; document.getElementById('caller-name').textContent = data.name; });
     socket.on('call_accepted', (signal) => { if(currentPeer) currentPeer.signal(signal); });
     socket.on('call_busy', () => { alert("Абонент занят"); endCallUI(); });
@@ -256,31 +287,41 @@ function connectToServer() {
 
     socket.on('group_created', (group) => {
         closeModal('create-group-modal');
-        openChat({ id: group.id, name: group.name, avatar: null, creator_id: currentUser.id }, 'group');
+        openChat({ id: group.id, name: group.name, avatar: group.avatar, creator_id: group.creator_id }, 'group');
     });
 
     socket.on('group_details_loaded', ({ group, members }) => {
         currentGroupDetails = { group, members };
         document.getElementById('group-info-name').textContent = group.name;
         document.getElementById('group-info-avatar').src = group.avatar ? serverUrl + group.avatar : 'https://placehold.co/100';
-        
-        const list = document.getElementById('group-members-list');
-        list.innerHTML = '';
-        
         const isAdmin = group.creator_id === currentUser.id;
         document.getElementById('group-admin-tools').style.display = isAdmin ? 'block' : 'none';
+        
+        if(isAdmin) {
+            document.getElementById('group-info-name').style.display = 'none';
+            const nameInput = document.getElementById('group-info-name-input');
+            nameInput.style.display = 'block';
+            nameInput.value = group.name;
+            document.getElementById('group-edit-btn').style.display = 'flex';
+            document.getElementById('save-group-btn').style.display = 'block';
+        } else {
+            document.getElementById('group-info-name').style.display = 'block';
+            document.getElementById('group-info-name-input').style.display = 'none';
+            document.getElementById('group-edit-btn').style.display = 'none';
+            document.getElementById('save-group-btn').style.display = 'none';
+        }
 
+        const list = document.getElementById('group-members-list');
+        list.innerHTML = '';
         members.forEach(m => {
             const div = document.createElement('div');
             const avatar = m.avatar ? serverUrl + m.avatar : 'https://placehold.co/40';
             div.className = 'user-list-item';
             div.style.cursor = 'default';
-            
             let kickBtn = '';
             if(isAdmin && m.id !== currentUser.id) {
                 kickBtn = `<button class="kick-btn" onclick="removeMember(${group.id}, ${m.id})"><i class="fas fa-times"></i></button>`;
             }
-
             div.innerHTML = `
                 <img src="${avatar}">
                 <div class="info">
@@ -289,17 +330,36 @@ function connectToServer() {
                 </div>
                 ${kickBtn}
             `;
+            if(m.id !== currentUser.id) {
+                div.onclick = (e) => { if(!e.target.closest('.kick-btn')) openUserProfile(m); };
+                div.style.cursor = 'pointer';
+            }
             list.appendChild(div);
         });
-        
         document.getElementById('group-info-modal').style.display = 'flex';
     });
 
     socket.on('group_updated', ({ groupId }) => {
         if(currentChat && currentChat.id === groupId && currentChat.type === 'group') {
             socket.emit('get_group_details', groupId);
+            if(currentGroupDetails) {
+                document.getElementById('chat-name').textContent = currentGroupDetails.group.name;
+                document.getElementById('chat-avatar').src = currentGroupDetails.group.avatar ? serverUrl + currentGroupDetails.group.avatar : 'https://placehold.co/50';
+            }
         }
         socket.emit('authenticate', currentUser.id);
+    });
+
+    socket.on('message_readers_list', (users) => {
+        const list = document.getElementById('readers-list');
+        list.innerHTML = '';
+        users.forEach(u => {
+            const div = document.createElement('div');
+            div.className = 'user-list-item';
+            div.innerHTML = `<img src="${u.avatar ? serverUrl + u.avatar : 'https://placehold.co/40'}"><div class="name">${u.nickname}</div>`;
+            list.appendChild(div);
+        });
+        document.getElementById('readers-modal').style.display = 'flex';
     });
 }
 
@@ -307,7 +367,6 @@ function renderSidebar(list = null, isSearch = false) {
     const container = document.getElementById('chats-list');
     container.innerHTML = '';
     const data = list || sidebarChats;
-    if(isSearch && data.length === 0) container.innerHTML = '<div style="padding:10px; color:#777;">Ничего не найдено</div>';
     data.forEach(item => {
         if(item.id === currentUser.id && item.type !== 'group') return;
         const el = document.createElement('div');
@@ -337,17 +396,53 @@ window.handleHeaderClick = () => {
     }
 };
 
-window.openCreateGroupModal = () => { 
-    document.getElementById('create-group-modal').style.display = 'flex'; 
-    socket.emit('get_contacts_for_group', currentUser.id); 
+window.previewGroupAvatar = (e) => {
+    const file = e.target.files[0];
+    if(file) {
+        const reader = new FileReader();
+        reader.onload = ev => document.getElementById('new-group-avatar-preview').src = ev.target.result;
+        reader.readAsDataURL(file);
+    }
 };
 
-window.createGroup = () => {
+window.createGroup = async () => {
     const name = document.getElementById('new-group-name').value;
     const checks = document.querySelectorAll('#group-candidates-list input:checked');
     if(!name) return alert("Введите имя группы");
+    
+    const fileInput = document.getElementById('new-group-avatar-input');
+    let avatarUrl = null;
+    if(fileInput.files[0]) {
+        const fd = new FormData();
+        fd.append('file', fileInput.files[0]);
+        try {
+            const res = await fetch(`${serverUrl}/api/upload`, { method: 'POST', body: fd });
+            const data = await res.json();
+            avatarUrl = data.url;
+        } catch(e) {}
+    }
+
     const memberIds = Array.from(checks).map(c => parseInt(c.value));
-    socket.emit('create_group', { name, memberIds, creatorId: currentUser.id });
+    socket.emit('create_group', { name, memberIds, creatorId: currentUser.id, avatar: avatarUrl });
+};
+
+window.updateGroupAvatar = (e) => { const file = e.target.files[0]; if(file) { const reader = new FileReader(); reader.onload = ev => document.getElementById('group-info-avatar').src = ev.target.result; reader.readAsDataURL(file); } };
+window.saveGroupSettings = async () => {
+    const name = document.getElementById('group-info-name-input').value;
+    const fileInput = document.getElementById('edit-group-avatar-input');
+    const fd = new FormData();
+    fd.append('groupId', currentGroupDetails.group.id);
+    fd.append('name', name);
+    if(fileInput.files[0]) fd.append('avatar', fileInput.files[0]);
+    
+    await fetch(`${serverUrl}/api/group/update`, { method: 'POST', body: fd });
+    socket.emit('notify_group_update', currentGroupDetails.group.id);
+    socket.emit('get_group_details', currentGroupDetails.group.id);
+};
+
+window.openCreateGroupModal = () => { 
+    document.getElementById('create-group-modal').style.display = 'flex'; 
+    socket.emit('get_contacts_for_group', currentUser.id); 
 };
 
 window.addMemberToGroup = () => {
@@ -405,46 +500,147 @@ window.closeChat = (e) => {
 
 function renderMessage(msg) {
     let contentToShow = msg.content;
+    
     if (msg.is_encrypted && currentChat.type === 'user') {
         const secret = getSharedSecret(currentChat.public_key);
         contentToShow = decryptText(msg.content, secret);
     } else if (msg.is_encrypted) {
         contentToShow = "🔒 Сообщение зашифровано (Ключ недоступен)";
     }
+
+    let statusIcon = '<i class="far fa-clock status-icon"></i>';
+    if (msg.read_by && msg.read_by.length > 1) statusIcon = '<i class="fas fa-check-double status-icon read"></i>';
+    else if (msg.id) statusIcon = '<i class="fas fa-check status-icon"></i>';
+
     const div = document.createElement('div');
     const sender = msg.sender_id || msg.senderId;
     const isMe = sender === currentUser.id;
-    div.className = `message ${isMe ? 'sent' : 'received'}`;
-    div.dataset.id = msg.id;
-    div.dataset.content = contentToShow;
     
-    div.oncontextmenu = (e) => {
+    const row = document.createElement('div');
+    row.className = `msg-row ${isMe ? 'sent' : 'received'}`;
+
+    if (!isMe) {
+        const img = document.createElement('img');
+        img.className = 'msg-avatar';
+        img.src = msg.senderAvatar ? serverUrl + msg.senderAvatar : 'https://placehold.co/40';
+        img.onclick = () => openUserProfile({ id: msg.sender_id, nickname: msg.senderName || 'User', avatar: msg.senderAvatar, username: '?' });
+        row.appendChild(img);
+    }
+
+    const bubble = document.createElement('div');
+    bubble.className = 'message';
+    bubble.dataset.id = msg.id;
+    bubble.dataset.content = contentToShow;
+    
+    bubble.oncontextmenu = (e) => {
         e.preventDefault();
         selectedMessageId = msg.id;
         const menu = document.getElementById('context-menu');
-        let canEdit = isMe && msg.type === 'text';
-        let canDelete = false;
-        if (isMe) canDelete = true;
-        else {
-            if (currentChat.type === 'user') canDelete = true; 
-            else if (currentChat.type === 'group' && currentChat.creator_id === currentUser.id) canDelete = true; 
-        }
-        const editBtn = menu.querySelector('div:first-child');
-        editBtn.style.display = canEdit ? 'block' : 'none';
-        const delBtn = menu.querySelector('div:last-child');
-        delBtn.style.display = canDelete ? 'block' : 'none';
-        if(editBtn.style.display === 'none' && delBtn.style.display === 'none') return;
+        const readersBtn = document.getElementById('show-readers-btn');
+        readersBtn.style.display = (currentChat.type === 'group') ? 'block' : 'none';
         menu.style.display = 'block'; menu.style.left = e.pageX + 'px'; menu.style.top = e.pageY + 'px';
     };
 
     let html = '';
-    if (msg.group_id && !isMe) html += `<span class="msg-name">${msg.senderName || 'User'}</span>`;
-    if(msg.type === 'text') html += `<p>${contentToShow.replace(/\n/g, '<br>')}${msg.is_edited ? ' <span class="msg-edited">(изм.)</span>' : ''}</p>`;
-    else if(msg.type === 'image') html += `<img src="${serverUrl + msg.file_url}" onclick="window.open('${serverUrl + msg.file_url}')">`;
-    else { const fileName = msg.file_name || 'Файл'; const fileSize = msg.file_size ? formatBytes(msg.file_size) : ''; html += `<div class="file-card-box"><div class="file-icon"><i class="fas fa-file"></i></div><div class="file-info"><span class="file-name">${fileName}</span><span class="file-meta">${fileSize}</span></div><a href="${serverUrl + msg.file_url}" target="_blank" class="file-download-btn"><i class="fas fa-download"></i></a></div>`; }
-    div.innerHTML = html;
-    document.getElementById('messages-container').appendChild(div);
+    if (currentChat.type === 'group' && !isMe) html += `<span class="msg-name">${msg.senderName || 'User'}</span>`;
+    
+    if(msg.type === 'text') {
+        html += `<p>${contentToShow.replace(/\n/g, '<br>')}${msg.is_edited ? ' <span class="msg-edited">(изм.)</span>' : ''}</p>`;
+    } else if(msg.type === 'image') {
+        html += `<img src="${serverUrl + msg.file_url}" onclick="window.open('${serverUrl + msg.file_url}')">`;
+    } else {
+        const fileName = msg.file_name || 'Файл';
+        const fileSize = msg.file_size ? formatBytes(msg.file_size) : '';
+        html += `
+            <div class="file-card-box">
+                <div class="file-icon"><i class="fas fa-file"></i></div>
+                <div class="file-info">
+                    <span class="file-name">${fileName}</span>
+                    <span class="file-meta">${fileSize}</span>
+                </div>
+                <a href="${serverUrl + msg.file_url}" target="_blank" class="file-download-btn"><i class="fas fa-download"></i></a>
+            </div>`;
+    }
+
+    const time = new Date(msg.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+    html += `<div class="msg-meta">${time} ${isMe ? statusIcon : ''}</div>`;
+    html += `<div class="reactions-container"></div>`;
+
+    bubble.innerHTML = html;
+    
+    renderReactions(bubble, msg.reactions);
+
+    row.appendChild(bubble);
+    document.getElementById('messages-container').appendChild(row);
     scrollToBottom();
+}
+
+function renderReactions(msgElement, reactions) {
+    const container = msgElement.querySelector('.reactions-container');
+    container.innerHTML = '';
+    for (const [emoji, userIds] of Object.entries(reactions)) {
+        const tag = document.createElement('div');
+        tag.className = 'reaction-tag';
+        if (userIds.includes(currentUser.id)) tag.classList.add('active');
+        tag.innerHTML = `${emoji} ${userIds.length}`;
+        tag.onclick = () => sendReaction(emoji);
+        tag.title = "Users: " + userIds.join(', ');
+        container.appendChild(tag);
+    }
+}
+
+window.sendReaction = (emoji) => {
+    const msgId = selectedMessageId;
+    if(!msgId) return;
+    document.getElementById('context-menu').style.display = 'none';
+    socket.emit('add_reaction', { 
+        messageId: msgId, 
+        emoji, 
+        userId: currentUser.id, 
+        groupId: currentChat.type === 'group' ? currentChat.id : null, 
+        receiverId: currentChat.type === 'user' ? currentChat.id : null 
+    });
+};
+
+window.showReaders = () => {
+    document.getElementById('context-menu').style.display = 'none';
+    socket.emit('get_message_readers', selectedMessageId);
+};
+
+window.openUserProfile = (user) => {
+    document.getElementById('view-profile-avatar').src = user.avatar ? serverUrl + user.avatar : 'https://placehold.co/100';
+    document.getElementById('view-profile-nickname').textContent = user.nickname;
+    document.getElementById('view-profile-username').textContent = ''; 
+    const btn = document.getElementById('btn-write-msg');
+    btn.onclick = () => {
+        closeModal('view-profile-modal');
+        openChat({ id: user.id, name: user.nickname, avatar: user.avatar, type: 'user' }, 'user');
+    };
+    document.getElementById('view-profile-modal').style.display = 'flex';
+};
+
+window.copyUsername = () => {
+    const fullId = "@" + currentUser.username; 
+    navigator.clipboard.writeText(fullId).then(() => {
+        showToast("Ваш ID скопирован в буфер обмена");
+    }).catch(err => {
+        console.error('Ошибка копирования: ', err);
+    });
+};
+
+function showToast(message) {
+    const oldToast = document.querySelector('.discord-toast');
+    if (oldToast) oldToast.remove();
+    const toast = document.createElement('div');
+    toast.className = 'discord-toast';
+    toast.textContent = message;
+    document.body.appendChild(toast);
+    void toast.offsetWidth; 
+    toast.classList.add('show');
+    setTimeout(() => {
+        toast.classList.remove('show');
+        setTimeout(() => toast.remove(), 300);
+    }, 2000);
 }
 
 function scrollToBottom() { const c = document.getElementById('messages-container'); c.scrollTop = c.scrollHeight; }
@@ -476,5 +672,3 @@ window.toggleCam = () => { if(!localStream) return; const track = localStream.ge
 window.endCall = () => { const partnerId = currentChat ? currentChat.id : (incomingCallData ? incomingCallData.from : null); if(partnerId) socket.emit('end_call', { to: partnerId }); if(currentPeer) currentPeer.destroy(); if(localStream) localStream.getTracks().forEach(t => t.stop()); currentPeer = null; localStream = null; incomingCallData = null; document.getElementById('active-call-modal').style.display = 'none'; document.getElementById('incoming-call-modal').style.display = 'none'; };
 window.openProfileSettings = () => { document.getElementById('profile-modal').style.display = 'flex'; document.getElementById('edit-nickname').value = currentUser.nickname; document.getElementById('profile-big-username').textContent = '@' + currentUser.username; const avatarSrc = currentUser.avatar ? serverUrl + currentUser.avatar : 'https://placehold.co/100'; document.getElementById('profile-big-avatar').src = avatarSrc; };
 function formatBytes(bytes, decimals = 2) { if (!+bytes) return '0 B'; const k = 1024; const dm = decimals < 0 ? 0 : decimals; const sizes = ['B', 'KB', 'MB', 'GB']; const i = Math.floor(Math.log(bytes) / Math.log(k)); return `${parseFloat((bytes / Math.pow(k, i)).toFixed(dm))} ${sizes[i]}`; }
-window.copyUsername = () => { const fullId = "@" + currentUser.username; navigator.clipboard.writeText(fullId).then(() => { showToast("Ваш ID скопирован в буфер обмена"); }).catch(err => { console.error('Ошибка копирования: ', err); }); };
-function showToast(message) { const oldToast = document.querySelector('.discord-toast'); if (oldToast) oldToast.remove(); const toast = document.createElement('div'); toast.className = 'discord-toast'; toast.textContent = message; document.body.appendChild(toast); void toast.offsetWidth; toast.classList.add('show'); setTimeout(() => { toast.classList.remove('show'); setTimeout(() => toast.remove(), 300); }, 2000); }
