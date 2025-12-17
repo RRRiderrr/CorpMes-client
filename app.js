@@ -164,9 +164,17 @@ function connectToServer() {
     socket.on('user_revived', () => socket.emit('authenticate', currentUser.id));
     
     socket.on('new_message', (msg) => {
-        if ((msg.group_id && currentChat?.type === 'group' && currentChat.id === msg.group_id) || (!msg.group_id && currentChat?.type === 'user' && (msg.sender_id === currentChat.id || msg.sender_id === currentUser.id))) {
+        // Проверяем принадлежность сообщения к текущему чату
+        const isCurrentGroup = msg.group_id && currentChat?.type === 'group' && currentChat.id === msg.group_id;
+        const isCurrentDM = !msg.group_id && currentChat?.type === 'user' && (msg.sender_id === currentChat.id || msg.sender_id === currentUser.id);
+
+        if (isCurrentGroup || isCurrentDM) {
             renderMessage(msg);
-            if(msg.sender_id !== currentUser.id) socket.emit('mark_read', { messageId: msg.id, userId: currentUser.id, groupId: msg.group_id, senderId: msg.sender_id });
+            if(msg.sender_id !== currentUser.id) {
+                // Если мы получили сообщение и чат открыт - помечаем прочитанным
+                const groupId = msg.group_id || msg.groupId; // Normalization check
+                socket.emit('mark_read', { messageId: msg.id, userId: currentUser.id, groupId: groupId, senderId: msg.sender_id });
+            }
         }
         socket.emit('authenticate', currentUser.id);
     });
@@ -189,8 +197,10 @@ function connectToServer() {
     socket.on('history_loaded', (msgs) => { 
         document.getElementById('messages-container').innerHTML = ''; 
         msgs.forEach(renderMessage); 
+        // При загрузке истории помечаем непрочитанные как прочитанные
         msgs.forEach(m => {
-            if(m.sender_id !== currentUser.id && !m.read_by.includes(currentUser.id)) {
+            const readBy = typeof m.read_by === 'string' ? JSON.parse(m.read_by) : m.read_by;
+            if(m.sender_id !== currentUser.id && !readBy.includes(currentUser.id)) {
                 socket.emit('mark_read', { messageId: m.id, userId: currentUser.id, groupId: m.group_id, senderId: m.sender_id });
             }
         });
@@ -339,11 +349,22 @@ window.closeChat = (e) => { if(e) e.stopPropagation(); currentChat = null; docum
 
 function renderMessage(msg) {
     let contentToShow = msg.content;
-    if (msg.is_encrypted && currentChat.type === 'user') { const secret = getSharedSecret(currentChat.public_key); contentToShow = decryptText(msg.content, secret); }
-    else if (msg.is_encrypted) { contentToShow = "🔒 Сообщение зашифровано (Ключ недоступен)"; }
+    
+    // Исправлено: Приводим is_encrypted к boolean
+    const isEncrypted = (msg.is_encrypted === 1 || msg.is_encrypted === true);
 
+    if (isEncrypted && currentChat.type === 'user') { 
+        const secret = getSharedSecret(currentChat.public_key); 
+        contentToShow = decryptText(msg.content, secret); 
+    }
+    else if (isEncrypted) { 
+        contentToShow = "🔒 Сообщение зашифровано (Ключ недоступен)"; 
+    }
+
+    // Прочитано?
     let statusIcon = '<i class="far fa-clock status-icon"></i>';
-    if (msg.read_by && msg.read_by.length > 1) statusIcon = '<i class="fas fa-check-double status-icon read"></i>';
+    const readBy = typeof msg.read_by === 'string' ? JSON.parse(msg.read_by) : (msg.read_by || []);
+    if (readBy.length > 1) statusIcon = '<i class="fas fa-check-double status-icon read"></i>';
     else if (msg.id) statusIcon = '<i class="fas fa-check status-icon"></i>';
 
     const isMe = msg.sender_id === currentUser.id;
@@ -358,7 +379,7 @@ function renderMessage(msg) {
 
     if (!isMe) {
         const img = document.createElement('img'); img.className = 'msg-avatar';
-        // Если это подряд идущее сообщение, аватарка скрывается CSS (visibility: hidden)
+        // Исправлено: Добавлен serverUrl к аватарке
         img.src = msg.senderAvatar ? serverUrl + msg.senderAvatar : 'https://placehold.co/40';
         img.onclick = () => openUserProfile({ id: msg.sender_id, nickname: msg.senderName || 'User', avatar: msg.senderAvatar, username: '?' });
         row.appendChild(img);
@@ -368,6 +389,8 @@ function renderMessage(msg) {
     bubble.oncontextmenu = (e) => { 
         e.preventDefault(); selectedMessageId = msg.id; const menu = document.getElementById('context-menu'); 
         const readersBtn = document.getElementById('show-readers-btn'); readersBtn.style.display = (currentChat.type === 'group') ? 'block' : 'none'; 
+        
+        // Исправлено: Меню не обрезается
         const menuWidth = 150; const menuHeight = 150; let x = e.pageX; let y = e.pageY;
         if(x + menuWidth > window.innerWidth) x -= menuWidth; if(y + menuHeight > window.innerHeight) y -= menuHeight;
         menu.style.display = 'block'; menu.style.left = x + 'px'; menu.style.top = y + 'px'; 
@@ -377,13 +400,32 @@ function renderMessage(msg) {
     // Show name only if group, not me, and not consecutive
     if (currentChat.type === 'group' && !isMe && !isConsecutive) html += `<span class="msg-name">${msg.senderName || 'User'}</span>`;
     
-    if(msg.type === 'text') html += `<p>${contentToShow.replace(/\n/g, '<br>')}${msg.is_edited ? ' <span class="msg-edited">(изм.)</span>' : ''}</p>`;
-    else if(msg.type === 'image') html += `<img src="${serverUrl + msg.file_url}" onclick="window.open('${serverUrl + msg.file_url}')">`;
-    else { html += `<div class="file-card-box"><div class="file-icon"><i class="fas fa-file"></i></div><div class="file-info"><span class="file-name">${msg.file_name}</span><span class="file-meta">${formatBytes(msg.file_size)}</span></div><a href="${serverUrl + msg.file_url}" target="_blank" class="file-download-btn"><i class="fas fa-download"></i></a></div>`; }
+    if(msg.type === 'text') {
+        html += `<p>${contentToShow.replace(/\n/g, '<br>')}${msg.is_edited ? ' <span class="msg-edited">(изм.)</span>' : ''}</p>`;
+    } else if(msg.type === 'image') {
+        html += `<img src="${serverUrl + msg.file_url}" onclick="window.open('${serverUrl + msg.file_url}')">`;
+    } else {
+        const fileName = msg.file_name || 'Файл';
+        const fileSize = msg.file_size ? formatBytes(msg.file_size) : '';
+        html += `
+            <div class="file-card-box">
+                <div class="file-icon"><i class="fas fa-file"></i></div>
+                <div class="file-info">
+                    <span class="file-name">${fileName}</span>
+                    <span class="file-meta">${fileSize}</span>
+                </div>
+                <a href="${serverUrl + msg.file_url}" target="_blank" class="file-download-btn"><i class="fas fa-download"></i></a>
+            </div>`;
+    }
+
     const time = new Date(msg.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
     html += `<div class="msg-meta">${time} ${isMe ? statusIcon : ''}</div><div class="reactions-container"></div>`;
     bubble.innerHTML = html;
-    renderReactions(bubble, msg.reactions);
+    
+    // Реакции
+    const reactions = typeof msg.reactions === 'string' ? JSON.parse(msg.reactions) : (msg.reactions || {});
+    renderReactions(bubble, reactions);
+
     row.appendChild(bubble);
     container.appendChild(row);
     scrollToBottom();
@@ -437,7 +479,11 @@ window.sendMessage = async () => {
     if(txt) { emitMsg(encryptedText, 'text', null, null, null, isEncrypted); input.value = ''; }
     document.getElementById('emoji-picker').style.display = 'none'; document.getElementById('emoji-suggestions').style.display = 'none';
 };
-function emitMsg(content, type, url, fileName, fileSize, isEncrypted) { socket.emit('send_message', { senderId: currentUser.id, receiverId: currentChat.type === 'user' ? currentChat.id : null, groupId: currentChat.type === 'group' ? currentChat.id : null, content, type, fileUrl: url, fileName, fileSize, isEncrypted: isEncrypted, senderName: currentUser.nickname }); }
+function emitMsg(content, type, url, fileName, fileSize, isEncrypted) { 
+    // Исправлено: передаем и group_id, и groupId для совместимости
+    const groupId = currentChat.type === 'group' ? currentChat.id : null;
+    socket.emit('send_message', { senderId: currentUser.id, receiverId: currentChat.type === 'user' ? currentChat.id : null, groupId: groupId, group_id: groupId, content, type, fileUrl: url, fileName, fileSize, isEncrypted: isEncrypted, senderName: currentUser.nickname }); 
+}
 window.startCall = (e) => { if(e) e.stopPropagation(); if(currentChat.type === 'group') return alert("Звонки только тет-а-тет"); navigator.mediaDevices.getUserMedia({ audio: true, video: false }).then(stream => { setupCallUI(stream); currentPeer = new SimplePeer({ initiator: true, trickle: false, stream }); currentPeer.on('signal', data => socket.emit('call_user', { userToCall: currentChat.id, signalData: data, from: currentUser.id, name: currentUser.nickname })); currentPeer.on('stream', rs => { const v = document.getElementById('remote-video'); v.srcObject = rs; v.muted = false; }); }).catch(e => alert("Нет доступа к микрофону")); };
 window.acceptCall = () => { document.getElementById('incoming-call-modal').style.display = 'none'; navigator.mediaDevices.getUserMedia({ audio: true, video: false }).then(stream => { setupCallUI(stream); currentPeer = new SimplePeer({ initiator: false, trickle: false, stream }); currentPeer.on('signal', data => socket.emit('answer_call', { signal: data, to: incomingCallData.from })); currentPeer.on('stream', rs => { const v = document.getElementById('remote-video'); v.srcObject = rs; v.muted = false; }); currentPeer.signal(incomingCallData.signal); }).catch(e => alert("Ошибка: " + e)); };
 window.declineCall = () => { document.getElementById('incoming-call-modal').style.display = 'none'; socket.emit('end_call', { to: incomingCallData.from }); incomingCallData = null; };
