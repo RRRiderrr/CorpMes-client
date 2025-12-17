@@ -6,7 +6,6 @@
     <title>CorpMes</title>
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
     <link rel="stylesheet" href="style.css">
-    
     <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/elliptic/6.5.4/elliptic.min.js"></script>
 </head>
@@ -16,9 +15,7 @@
         <div class="auth-container">
             <h1>CorpMes</h1>
             <p style="color:#aaa; font-size:14px; margin-bottom:20px;">Защищенный вход</p>
-            
             <input type="text" id="server-url" placeholder="Адрес сервера (https://...)">
-            
             <div class="key-file-area">
                 <i class="fas fa-key" style="font-size: 40px; color: var(--primary); margin-bottom: 15px;"></i>
                 <p>Для входа требуется файл-ключ</p>
@@ -26,7 +23,6 @@
                 <button onclick="document.getElementById('auth-key-file').click()" class="primary-btn" style="margin-top:5px;">Выбрать файл</button>
                 <p id="key-file-name" style="margin-top:10px; font-weight:bold; color:#fff; word-break: break-all;"></p>
             </div>
-
             <button id="btn-login" onclick="loginWithKey()" class="primary-btn" style="display:none; background: #4caf50;">Войти в систему</button>
         </div>
     </div>
@@ -38,7 +34,6 @@
                     <img id="my-avatar" src="" onerror="this.src='https://placehold.co/50'">
                     <i class="fas fa-cog" style="position:absolute; bottom:0; right:0; background:#000; border-radius:50%; padding:2px; font-size:10px;"></i>
                 </div>
-                
                 <div class="info">
                     <span id="my-name">...</span>
                     <small id="my-username-small" onclick="copyUsername()" title="Нажмите, чтобы скопировать ID">@login</small>
@@ -63,15 +58,15 @@
             </div>
 
             <div class="chat-interface" id="chat-interface" style="display:none;">
-                <div class="chat-header">
-                    <button class="back-btn" onclick="closeChat()"><i class="fas fa-arrow-left"></i></button>
+                <div class="chat-header" id="chat-header-clickable" onclick="handleHeaderClick()">
+                    <button class="back-btn" onclick="closeChat(event)"><i class="fas fa-arrow-left"></i></button>
                     <img id="chat-avatar" src="">
                     <div class="chat-title">
                         <span id="chat-name">User</span>
                         <small style="color:#4caf50; font-size:10px; display:none;" id="enc-status"><i class="fas fa-shield-alt"></i> Зашифровано (E2EE)</small>
                         <small style="color:#ff5555; font-size:10px; display:none;" id="chat-status"></small>
                     </div>
-                    <button class="call-btn" onclick="startCall()"><i class="fas fa-phone"></i></button>
+                    <button class="call-btn" onclick="startCall(event)"><i class="fas fa-phone"></i></button>
                 </div>
 
                 <div id="messages-container"></div>
@@ -84,11 +79,8 @@
                         <button onclick="clearFileSelection()"><i class="fas fa-times"></i></button>
                     </div>
                     <div id="edit-mode-bar" class="edit-mode-bar" style="display:none;">
-                        <i class="fas fa-pen"></i>
-                        <span>Редактирование</span>
-                        <button onclick="cancelEdit()"><i class="fas fa-times"></i></button>
+                        <i class="fas fa-pen"></i><span>Редактирование</span><button onclick="cancelEdit()"><i class="fas fa-times"></i></button>
                     </div>
-
                     <div class="input-area">
                         <div id="emoji-picker" class="emoji-picker" style="display:none;">
                             <div class="emoji-search"><input type="text" placeholder="Поиск..." oninput="filterEmojis(this.value)"></div>
@@ -160,25 +152,42 @@
             <span class="close" onclick="closeModal('create-group-modal')">&times;</span>
             <h2>Новая группа</h2>
             <input type="text" id="new-group-name" placeholder="Название группы">
+            <p style="text-align:left; color:#aaa; font-size:12px; margin: 10px 0 5px 0;">Выберите участников (из контактов):</p>
             <div id="group-candidates-list" class="checklist"></div>
             <button onclick="createGroup()" class="primary-btn">Создать группу</button>
         </div>
     </div>
     
+    <div id="group-info-modal" class="modal">
+        <div class="modal-content">
+            <span class="close" onclick="closeModal('group-info-modal')">&times;</span>
+            <div class="avatar-wrapper">
+                <img id="group-info-avatar" src="" class="big-avatar">
+            </div>
+            <h2 id="group-info-name" style="margin: 0 0 20px 0;">Group Name</h2>
+            
+            <div id="group-admin-tools" style="width:100%; display:none; margin-bottom:15px;">
+                <p style="text-align:left; color:#aaa; font-size:12px;">Добавить участника:</p>
+                <select id="group-add-select" style="width:100%; margin-bottom:5px;"></select>
+                <button onclick="addMemberToGroup()" class="primary-btn" style="padding:8px; font-size:12px;">Добавить</button>
+            </div>
+
+            <p style="text-align:left; color:#aaa; font-size:12px; width:100%;">Участники:</p>
+            <div id="group-members-list" class="checklist" style="height:200px;"></div>
+        </div>
+    </div>
+
     <div id="profile-modal" class="modal">
         <div class="modal-content">
             <span class="close" onclick="closeModal('profile-modal')">&times;</span>
             <h2>Профиль</h2>
-            
             <div class="avatar-wrapper profile-wrapper">
                 <img id="profile-big-avatar" src="" class="big-avatar" onerror="this.src='https://placehold.co/100'">
                 <input type="file" id="edit-avatar-input" hidden onchange="previewEditAvatar(event)">
                 <label for="edit-avatar-input" class="avatar-edit-btn"><i class="fas fa-pen"></i></label>
             </div>
-
             <input type="text" id="edit-nickname" placeholder="Отображаемое имя" style="text-align:center; font-weight:bold; width: 100%; margin-bottom: 10px; background: #333; color: white; border: 1px solid #444; padding: 5px; border-radius: 5px;">
             <p id="profile-big-username" style="color: #0088cc; margin-top: 5px; font-size:12px;"></p>
-            
             <button onclick="saveProfile()" class="primary-btn">Сохранить изменения</button>
             <button onclick="logout()" class="danger-btn" style="margin-top:30px;">Выйти из аккаунта</button>
         </div>
