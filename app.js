@@ -349,7 +349,11 @@ window.createGroup = async () => {
     if(!name) return alert("Введите имя группы");
     const fileInput = document.getElementById('new-group-avatar-input');
     let avatarUrl = null;
-    if(fileInput.files[0]) { const fd = new FormData(); fd.append('file', fileInput.files[0]); try { const res = await fetch(`${serverUrl}/api/upload`, { method: 'POST', body: fd }); const data = await res.json(); avatarUrl = data.url; } catch(e) {} }
+    if(fileInput.files[0]) {
+        // Upload avatar to secure blob
+        const fd = new FormData(); fd.append('file', fileInput.files[0]); 
+        try { const res = await fetch(`${serverUrl}/api/upload_secure`, { method: 'POST', body: fd }); const data = await res.json(); avatarUrl = `/api/file/${data.fileId}`; } catch(e) {} 
+    }
     const memberIds = Array.from(checks).map(c => parseInt(c.value));
     socket.emit('create_group', { name, memberIds, creatorId: currentUser.id, avatar: avatarUrl });
 };
@@ -434,13 +438,15 @@ async function renderMessage(msg) {
         const decryptedFileKeyHex = decryptText(msg.content, secret);
         
         const placeholderId = `file-${msg.id}`;
-        html = `<div id="${placeholderId}">Loading...</div>`; // Use html variable from outer scope if possible, but here we set bubble innerHTML later
+        // We now fetch from DB blob endpoint using file_url which contains ID
+        // Wait, server response gave us url. Correct.
         bubble.innerHTML = `<div id="${placeholderId}">Loading...</div>`;
         
         if(decryptedFileKeyHex && msg.file_iv) {
             (async () => {
                 try {
                     const key = await importKey(decryptedFileKeyHex);
+                    // Fetch blob from server (DB)
                     const response = await fetch(serverUrl + msg.file_url);
                     const encryptedBlob = await response.blob();
                     const decryptedBlob = await decryptFile(encryptedBlob, key, msg.file_iv);
@@ -549,12 +555,13 @@ window.sendMessage = async () => {
         const key = await generateFileKey();
         const { encryptedBlob, iv } = await encryptFile(file, key);
         
+        // Upload SECURE blob to DB
         const fd = new FormData();
         fd.append('file', encryptedBlob, file.name + ".enc"); 
         
         try {
-            const res = await fetch(`${serverUrl}/api/upload`, { method:'POST', body:fd });
-            const fileData = await res.json();
+            const res = await fetch(`${serverUrl}/api/upload_secure`, { method:'POST', body:fd });
+            const fileData = await res.json(); // returns fileId, size
             
             // KEY EXCHANGE LOGIC
             const rawFileKey = await exportKey(key);
@@ -568,13 +575,19 @@ window.sendMessage = async () => {
             
             // Send metadata + key (in content) + iv
             const groupId = currentChat.type === 'group' ? currentChat.id : null;
+            // The file_url here is actually the API endpoint to fetch blob: /api/file/{id}
+            // But we construct it on server or client? Let's use what server returned? Server returned ID.
+            // Let's construct URL on client or pass ID.
+            // Client expects fileUrl to be fetchable.
+            
             socket.emit('send_message', { 
                 senderId: currentUser.id, 
                 receiverId: currentChat.type === 'user' ? currentChat.id : null, 
                 groupId: groupId, 
                 content: encryptedFileKey, // Store key in content
                 type: fileInput.files[0].type.startsWith('image/') ? 'image' : 'file', 
-                fileUrl: fileData.url, 
+                fileId: fileData.fileId,
+                fileUrl: `/api/file/${fileData.fileId}`, // Construct URL
                 fileName: file.name, 
                 fileSize: fileData.size, 
                 fileIv: iv,
