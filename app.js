@@ -58,7 +58,7 @@ document.addEventListener('DOMContentLoaded', () => {
     initEmojiPicker();
 });
 
-// --- CRYPTO HELPERS (WEB CRYPTO API for Files) ---
+// --- CRYPTO HELPERS ---
 function initCrypto(fileHashHex) { myKeyPair = ec.keyFromPrivate(fileHashHex); }
 function getSharedSecret(otherPubKeyHex) {
     if(!otherPubKeyHex) return null;
@@ -76,30 +76,15 @@ function decryptText(ciphertext, secret) {
     catch(e) { return "Ошибка расшифровки"; }
 }
 
-async function generateFileKey() {
-    return await window.crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, true, ["encrypt", "decrypt"]);
-}
-
+async function generateFileKey() { return await window.crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, true, ["encrypt", "decrypt"]); }
 async function encryptFile(file, key) {
     const iv = window.crypto.getRandomValues(new Uint8Array(12));
     const arrayBuffer = await file.arrayBuffer();
     const encryptedBuffer = await window.crypto.subtle.encrypt({ name: "AES-GCM", iv: iv }, key, arrayBuffer);
-    return { 
-        encryptedBlob: new Blob([encryptedBuffer]), 
-        iv: Array.from(iv).map(b => b.toString(16).padStart(2, '0')).join('') 
-    };
+    return { encryptedBlob: new Blob([encryptedBuffer]), iv: Array.from(iv).map(b => b.toString(16).padStart(2, '0')).join('') };
 }
-
-async function exportKey(key) {
-    const exported = await window.crypto.subtle.exportKey("raw", key);
-    return Array.from(new Uint8Array(exported)).map(b => b.toString(16).padStart(2, '0')).join('');
-}
-
-async function importKey(keyHex) {
-    const keyBuffer = new Uint8Array(keyHex.match(/.{1,2}/g).map(byte => parseInt(byte, 16)));
-    return await window.crypto.subtle.importKey("raw", keyBuffer, "AES-GCM", true, ["encrypt", "decrypt"]);
-}
-
+async function exportKey(key) { const exported = await window.crypto.subtle.exportKey("raw", key); return Array.from(new Uint8Array(exported)).map(b => b.toString(16).padStart(2, '0')).join(''); }
+async function importKey(keyHex) { const keyBuffer = new Uint8Array(keyHex.match(/.{1,2}/g).map(byte => parseInt(byte, 16))); return await window.crypto.subtle.importKey("raw", keyBuffer, "AES-GCM", true, ["encrypt", "decrypt"]); }
 async function decryptFile(encryptedBlob, key, ivHex) {
     const iv = new Uint8Array(ivHex.match(/.{1,2}/g).map(byte => parseInt(byte, 16)));
     const arrayBuffer = await encryptedBlob.arrayBuffer();
@@ -201,6 +186,7 @@ function connectToServer() {
     socket.on('user_revived', () => socket.emit('authenticate', currentUser.id));
     
     socket.on('new_message', (msg) => {
+        // FIX 1: Decrypt messages immediately on arrival
         const isCurrentGroup = msg.group_id && currentChat?.type === 'group' && currentChat.id === msg.group_id;
         const isCurrentDM = !msg.group_id && currentChat?.type === 'user' && (msg.sender_id === currentChat.id || msg.sender_id === currentUser.id);
 
@@ -243,10 +229,12 @@ function connectToServer() {
 
     socket.on('call_incoming', (data) => { if(currentPeer || incomingCallData) { socket.emit('call_busy'); return; } incomingCallData = data; document.getElementById('incoming-call-modal').style.display = 'flex'; document.getElementById('caller-name').textContent = data.name; });
     
-    // FIX: WebRTC Negotiate Error
+    // FIX 4: Renegotiate Error
     socket.on('call_accepted', (signal) => { 
         if(currentPeer && !currentPeer.destroyed) {
-            currentPeer.signal(signal); 
+            try {
+                currentPeer.signal(signal); 
+            } catch(e) { console.warn("Signal error", e); }
         }
     });
     
@@ -350,7 +338,6 @@ window.createGroup = async () => {
     const fileInput = document.getElementById('new-group-avatar-input');
     let avatarUrl = null;
     if(fileInput.files[0]) {
-        // Upload avatar to secure blob
         const fd = new FormData(); fd.append('file', fileInput.files[0]); 
         try { const res = await fetch(`${serverUrl}/api/upload_secure`, { method: 'POST', body: fd }); const data = await res.json(); avatarUrl = `/api/file/${data.fileId}`; } catch(e) {} 
     }
@@ -433,21 +420,24 @@ async function renderMessage(msg) {
     // FILE DECRYPTION ON THE FLY
     let fileHtml = '';
     if(msg.type === 'image' || msg.type === 'file') {
+        // FIX 2: Ensure we are in the correct chat before async ops
+        const currentChatId = currentChat.id;
+        
         const secret = getSharedSecret(currentChat.public_key);
-        // Decrypt the file key from content
         const decryptedFileKeyHex = decryptText(msg.content, secret);
         
         const placeholderId = `file-${msg.id}`;
-        // We now fetch from DB blob endpoint using file_url which contains ID
-        // Wait, server response gave us url. Correct.
         bubble.innerHTML = `<div id="${placeholderId}">Loading...</div>`;
         
         if(decryptedFileKeyHex && msg.file_iv) {
             (async () => {
+                // If chat changed while decrypting, abort
+                if(currentChatId !== currentChat.id) return;
+                
                 try {
                     const key = await importKey(decryptedFileKeyHex);
-                    // Fetch blob from server (DB)
                     const response = await fetch(serverUrl + msg.file_url);
+                    if(!response.ok) throw new Error("File not found");
                     const encryptedBlob = await response.blob();
                     const decryptedBlob = await decryptFile(encryptedBlob, key, msg.file_iv);
                     const objectUrl = URL.createObjectURL(decryptedBlob);
@@ -455,7 +445,8 @@ async function renderMessage(msg) {
                     const el = document.getElementById(placeholderId);
                     if(el) {
                         if(msg.type === 'image') {
-                            el.innerHTML = `<img src="${objectUrl}" onclick="window.open('${objectUrl}')">`;
+                            // FIX 3: Open in Custom Viewer
+                            el.innerHTML = `<img src="${objectUrl}" onclick="openMediaViewer('${objectUrl}', 'image')">`;
                         } else {
                             el.innerHTML = `<div class="file-card-box"><div class="file-icon"><i class="fas fa-file"></i></div><div class="file-info"><span class="file-name">${msg.file_name}</span></div><a href="${objectUrl}" download="${msg.file_name}" class="file-download-btn"><i class="fas fa-download"></i></a></div>`;
                         }
@@ -494,6 +485,23 @@ async function renderMessage(msg) {
     container.appendChild(row);
     scrollToBottom();
 }
+
+// MEDIA VIEWER
+window.openMediaViewer = (url, type) => {
+    const modal = document.getElementById('media-viewer-modal');
+    const img = document.getElementById('media-viewer-img');
+    const btn = document.getElementById('media-download-btn');
+    
+    img.src = url;
+    img.style.display = 'block';
+    btn.href = url;
+    
+    modal.style.display = 'flex';
+};
+
+window.closeMediaViewer = () => {
+    document.getElementById('media-viewer-modal').style.display = 'none';
+};
 
 function renderReactions(msgElement, reactions) {
     const container = msgElement.querySelector('.reactions-container'); 
@@ -535,8 +543,11 @@ window.cancelEdit = () => { editingMessageId = null; document.getElementById('me
 window.initDeleteMessage = () => { document.getElementById('delete-modal').style.display = 'flex'; };
 window.confirmDelete = (mode) => { socket.emit('delete_message', { messageId: selectedMessageId, mode: mode, groupId: currentChat.type === 'group' ? currentChat.id : null, receiverId: currentChat.type === 'user' ? currentChat.id : null, userId: currentUser.id }); closeModal('delete-modal'); };
 window.handleInputKey = (e) => { if(e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } };
+
+// E2EE UPLOAD
 window.sendMessage = async () => {
     const input = document.getElementById('message-input'); const txt = input.value.trim(); const fileInput = document.getElementById('file-input');
+    
     if(editingMessageId) { if(txt) { socket.emit('edit_message', { messageId: editingMessageId, newContent: txt, groupId: currentChat.type === 'group' ? currentChat.id : null, receiverId: currentChat.type === 'user' ? currentChat.id : null }); cancelEdit(); } return; }
     if(!txt && !fileInput.files.length) return;
     
@@ -559,33 +570,27 @@ window.sendMessage = async () => {
         
         try {
             const res = await fetch(`${serverUrl}/api/upload_secure`, { method:'POST', body:fd });
-            const fileData = await res.json(); // returns fileId, size
+            const fileData = await res.json(); 
             
-            // KEY EXCHANGE LOGIC
+            // KEY EXCHANGE
             const rawFileKey = await exportKey(key);
-            let encryptedFileKey = rawFileKey; // Default plain for groups (simplified)
+            let encryptedFileKey = rawFileKey; 
             
-            // If DM, encrypt the file key with shared secret
             if(currentChat.type === 'user') {
                 const secret = getSharedSecret(currentChat.public_key);
                 if(secret) encryptedFileKey = encryptText(rawFileKey, secret);
             }
             
-            // Send metadata + key (in content) + iv
             const groupId = currentChat.type === 'group' ? currentChat.id : null;
-            // The file_url here is actually the API endpoint to fetch blob: /api/file/{id}
-            // But we construct it on server or client? Let's use what server returned? Server returned ID.
-            // Let's construct URL on client or pass ID.
-            // Client expects fileUrl to be fetchable.
             
             socket.emit('send_message', { 
                 senderId: currentUser.id, 
                 receiverId: currentChat.type === 'user' ? currentChat.id : null, 
                 groupId: groupId, 
-                content: encryptedFileKey, // Store key in content
+                content: encryptedFileKey, 
                 type: fileInput.files[0].type.startsWith('image/') ? 'image' : 'file', 
                 fileId: fileData.fileId,
-                fileUrl: `/api/file/${fileData.fileId}`, // Construct URL
+                fileUrl: `/api/file/${fileData.fileId}`, 
                 fileName: file.name, 
                 fileSize: fileData.size, 
                 fileIv: iv,
@@ -613,7 +618,6 @@ window.toggleDeviceMenu = (menuId) => {
     document.querySelectorAll('.device-menu').forEach(m => m.classList.remove('show'));
     if (!isShown) {
         menu.classList.add('show');
-        // Обновляем список устройств
         navigator.mediaDevices.enumerateDevices().then(devices => {
             menu.innerHTML = '';
             const type = menuId === 'video-menu' ? 'videoinput' : 'audioinput';
@@ -634,21 +638,19 @@ window.startCall = (e) => {
     if(e) e.stopPropagation(); 
     if(currentChat.type === 'group') return alert("Звонки только тет-а-тет"); 
     
-    // SETUP PLACEHOLDER FOR ME
     document.getElementById('remote-avatar-call').src = currentChat.avatar ? serverUrl + currentChat.avatar : 'https://placehold.co/150';
     document.getElementById('remote-name-call').textContent = "Connecting to " + currentChat.nickname + "...";
     document.getElementById('call-placeholder').style.display = 'flex';
     
-    // FIX: Wait for stream
+    // FIX 5: Ensure Stream is READY before Peer
     navigator.mediaDevices.getUserMedia({ audio: true, video: false }).then(stream => { 
         localStream = stream;
-        setupCallUI(); // Show UI only after stream
+        setupCallUI(); 
         
-        // Hide local wrapper initially
         document.getElementById('local-video-wrapper').style.display = 'none';
         document.getElementById('local-video').srcObject = stream;
         
-        currentPeer = new SimplePeer({ initiator: true, trickle: false, stream: stream }); // FIX: Pass stream
+        currentPeer = new SimplePeer({ initiator: true, trickle: false, stream: stream }); 
         
         currentPeer.on('signal', data => {
              socket.emit('call_user', { userToCall: currentChat.id, signalData: data, from: currentUser.id, name: currentUser.nickname });
@@ -657,11 +659,12 @@ window.startCall = (e) => {
         currentPeer.on('stream', rs => { 
              const v = document.getElementById('remote-video');
              v.srcObject = rs;
-             // Hide placeholder if video flows
              rs.onactive = () => document.getElementById('call-placeholder').style.display = 'none';
         }); 
         
-        currentPeer.on('error', err => console.error("Peer Error:", err));
+        currentPeer.on('connect', () => {
+             document.getElementById('call-placeholder').style.display = 'none';
+        });
 
     }).catch(e => alert("Нет доступа: " + e)); 
 };
@@ -687,6 +690,10 @@ window.acceptCall = () => {
              v.srcObject = rs; 
              document.getElementById('call-placeholder').style.display = 'none';
         }); 
+        
+        currentPeer.on('connect', () => {
+             document.getElementById('call-placeholder').style.display = 'none';
+        });
         
         currentPeer.signal(incomingCallData.signal); 
         
@@ -716,8 +723,7 @@ window.changeDevice = async (kind, deviceId) => {
 
         const newStream = await navigator.mediaDevices.getUserMedia(constraints);
         
-        // Replace tracks
-        if(currentPeer) {
+        if(currentPeer && !currentPeer.destroyed) {
             const senders = currentPeer._pc.getSenders();
             newStream.getTracks().forEach(track => {
                 const sender = senders.find(s => s.track.kind === track.kind);
@@ -729,7 +735,6 @@ window.changeDevice = async (kind, deviceId) => {
             localStream = newStream;
             document.getElementById('local-video').srcObject = newStream;
         } else {
-            // If screen sharing, only replace audio track in localStream
             const audioTrack = newStream.getAudioTracks()[0];
             if(audioTrack) {
                 const oldAudio = localStream.getAudioTracks()[0];
@@ -760,7 +765,7 @@ window.toggleCam = async () => {
         const vidStream = await navigator.mediaDevices.getUserMedia({ video: currentVideoDevice ? { deviceId: { exact: currentVideoDevice } } : true });
         const vidTrack = vidStream.getVideoTracks()[0];
         localStream.addTrack(vidTrack);
-        if(currentPeer) currentPeer.addTrack(vidTrack, localStream);
+        if(currentPeer && !currentPeer.destroyed) currentPeer.addTrack(vidTrack, localStream);
         
         document.getElementById('local-video').srcObject = localStream;
         document.getElementById('btn-cam').classList.add('active');
@@ -791,7 +796,7 @@ window.confirmScreenShare = async (withAudio) => {
         isScreenSharing = true;
         
         const screenTrack = stream.getVideoTracks()[0];
-        if(currentPeer) {
+        if(currentPeer && !currentPeer.destroyed) {
             const senders = currentPeer._pc.getSenders();
             const sender = senders.find(s => s.track.kind === 'video');
             if(sender) sender.replaceTrack(screenTrack);
@@ -814,15 +819,11 @@ window.endCall = () => {
     const partnerId = currentChat ? currentChat.id : (incomingCallData ? incomingCallData.from : null); 
     if(partnerId) socket.emit('end_call', { to: partnerId }); 
     
-    // FIX PIP: Clear sources
-    document.getElementById('remote-video').srcObject = null;
-    document.getElementById('local-video').srcObject = null;
-
-    // Destroy streams
     if(currentPeer) { currentPeer.destroy(); currentPeer = null; }
     if(localStream) { localStream.getTracks().forEach(t => t.stop()); localStream = null; }
 
-    // FORCE RELOAD to clear "Picture-in-Picture" ghosts
+    document.getElementById('remote-video').srcObject = null;
+    document.getElementById('local-video').srcObject = null;
     document.getElementById('remote-video').load();
     document.getElementById('local-video').load();
 
@@ -830,8 +831,3 @@ window.endCall = () => {
     document.getElementById('active-call-modal').style.display = 'none'; 
     document.getElementById('incoming-call-modal').style.display = 'none'; 
 };
-
-window.openProfileSettings = () => { document.getElementById('profile-modal').style.display = 'flex'; document.getElementById('edit-nickname').value = currentUser.nickname; document.getElementById('profile-big-username').textContent = '@' + currentUser.username; const avatarSrc = currentUser.avatar ? serverUrl + currentUser.avatar : 'https://placehold.co/100'; document.getElementById('profile-big-avatar').src = avatarSrc; };
-function formatBytes(bytes, decimals = 2) { if (!+bytes) return '0 B'; const k = 1024; const dm = decimals < 0 ? 0 : decimals; const sizes = ['B', 'KB', 'MB', 'GB']; const i = Math.floor(Math.log(bytes) / Math.log(k)); return `${parseFloat((bytes / Math.pow(k, i)).toFixed(dm))} ${sizes[i]}`; }
-window.copyUsername = () => { const fullId = "@" + currentUser.username; navigator.clipboard.writeText(fullId).then(() => { showToast("Ваш ID скопирован в буфер обмена"); }).catch(err => { console.error('Ошибка копирования: ', err); }); };
-function showToast(message) { const oldToast = document.querySelector('.discord-toast'); if (oldToast) oldToast.remove(); const toast = document.createElement('div'); toast.className = 'discord-toast'; toast.textContent = message; document.body.appendChild(toast); void toast.offsetWidth; toast.classList.add('show'); setTimeout(() => { toast.classList.remove('show'); setTimeout(() => toast.remove(), 300); }, 2000); }
