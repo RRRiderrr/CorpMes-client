@@ -10,11 +10,17 @@ let editingMessageId = null;
 let selectedMessageId = null;
 let currentGroupDetails = null;
 
+// Настройки звонка
+let currentAudioDevice = null;
+let currentVideoDevice = null;
+let isScreenSharing = false;
+
 const EC = elliptic.ec;
 const ec = new EC('secp256k1');
 let myKeyPair = null;
 let sharedKeys = {};
 
+// ПОЛНЫЙ СПИСОК ЭМОДЗИ
 const emojiData = {
     "Smileys": ["😀","😃","😄","😁","😆","😅","🤣","😂","🙂","🙃","😉","😊","😇","🥰","😍","🤩","😘","😗","😙","😋","😛","😜","🤪","😝","🤑","🤗","🤭","🤫","🤔","🤐","🤨","😐","😑","😶","😏","😒","🙄","😬","🤥","😌","😔","😪","🤤","😴","😷","🤒","🤕","🤢","🤮","🤧","🥵","🥶","🥴","😵","🤯","🤠","🥳","😎","🤓","🧐","😕","🙁","😮","😯","😲","😳","🥺","😦","😧","😨","😰","😥","😢","😭","😱","😖","😣","😞","😓","😩","😫","🥱","😤","😡","😠","🤬","😈","👿","💀","☠️","💩","🤡","👹","👺","👻","👽","👾","🤖"],
     "Body": ["👋","🤚","🖐","✋","🖖","👌","🤏","✌️","🤞","🤟","🤘","🤙","👈","👉","👆","🖕","👇","☝️","👍","👎","✊","👊","🤛","🤜","👏","🙌","👐","🤲","🤝","🙏","✍️","💅","🤳","💪","🦵","🦶","👂","🦻","👃","🧠","🦷","🦴","👀","👁","👅","👄","💋","🩸"],
@@ -23,6 +29,7 @@ const emojiData = {
     "18+": ["🍆","🍑","🍌","🍒","🌮","🍩","🌭","💦","🛏️","🚿","🔥","👅","💋","👙","👠","💄","🔞"]
 };
 
+// ПОЛНЫЙ СПИСОК КЛЮЧЕВЫХ СЛОВ
 const keywordMap = {
     "привет": ["👋","🙂","✋"], "пока": ["👋","🚶"], "любовь": ["❤️","😍","🥰"], "сердце": ["❤️","💔","💖"],
     "смешно": ["😂","🤣","😆"], "лол": ["😂","🤣"], "ого": ["😮","😲","🤯"], "ок": ["👌","👍","✅"],
@@ -41,14 +48,24 @@ document.addEventListener('DOMContentLoaded', () => {
     if (serverUrl && savedUser && savedKey) {
         const userObj = JSON.parse(savedUser);
         fetch(`${serverUrl}/api/validate_user`, {
-            method: 'POST', headers: {'Content-Type': 'application/json'},
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({ id: userObj.id, sessionToken: userObj.sessionToken })
         })
         .then(res => res.json())
         .then(data => {
-            if (data.valid) { currentUser = userObj; initCrypto(savedKey); connectToServer(); } else window.logout();
+            if (data.valid) {
+                currentUser = userObj;
+                initCrypto(savedKey);
+                connectToServer();
+            } else window.logout();
         })
-        .catch(err => { currentUser = userObj; initCrypto(savedKey); connectToServer(); });
+        .catch(err => {
+            // Если сервер не ответил, пробуем подключиться через сокеты (fallback)
+            currentUser = userObj;
+            initCrypto(savedKey);
+            connectToServer();
+        });
     }
     initEmojiPicker();
 });
@@ -164,15 +181,13 @@ function connectToServer() {
     socket.on('user_revived', () => socket.emit('authenticate', currentUser.id));
     
     socket.on('new_message', (msg) => {
-        // Проверяем принадлежность сообщения к текущему чату
         const isCurrentGroup = msg.group_id && currentChat?.type === 'group' && currentChat.id === msg.group_id;
         const isCurrentDM = !msg.group_id && currentChat?.type === 'user' && (msg.sender_id === currentChat.id || msg.sender_id === currentUser.id);
 
         if (isCurrentGroup || isCurrentDM) {
             renderMessage(msg);
             if(msg.sender_id !== currentUser.id) {
-                // Если мы получили сообщение и чат открыт - помечаем прочитанным
-                const groupId = msg.group_id || msg.groupId; // Normalization check
+                const groupId = msg.group_id || msg.groupId;
                 socket.emit('mark_read', { messageId: msg.id, userId: currentUser.id, groupId: groupId, senderId: msg.sender_id });
             }
         }
@@ -197,7 +212,6 @@ function connectToServer() {
     socket.on('history_loaded', (msgs) => { 
         document.getElementById('messages-container').innerHTML = ''; 
         msgs.forEach(renderMessage); 
-        // При загрузке истории помечаем непрочитанные как прочитанные
         msgs.forEach(m => {
             const readBy = typeof m.read_by === 'string' ? JSON.parse(m.read_by) : m.read_by;
             if(m.sender_id !== currentUser.id && !readBy.includes(currentUser.id)) {
@@ -206,6 +220,7 @@ function connectToServer() {
         });
         scrollToBottom(); 
     });
+
     socket.on('call_incoming', (data) => { if(currentPeer || incomingCallData) { socket.emit('call_busy'); return; } incomingCallData = data; document.getElementById('incoming-call-modal').style.display = 'flex'; document.getElementById('caller-name').textContent = data.name; });
     socket.on('call_accepted', (signal) => { if(currentPeer) currentPeer.signal(signal); });
     socket.on('call_busy', () => { alert("Абонент занят"); endCallUI(); });
@@ -349,8 +364,6 @@ window.closeChat = (e) => { if(e) e.stopPropagation(); currentChat = null; docum
 
 function renderMessage(msg) {
     let contentToShow = msg.content;
-    
-    // Исправлено: Приводим is_encrypted к boolean
     const isEncrypted = (msg.is_encrypted === 1 || msg.is_encrypted === true);
 
     if (isEncrypted && currentChat.type === 'user') { 
@@ -361,7 +374,6 @@ function renderMessage(msg) {
         contentToShow = "🔒 Сообщение зашифровано (Ключ недоступен)"; 
     }
 
-    // Прочитано?
     let statusIcon = '<i class="far fa-clock status-icon"></i>';
     const readBy = typeof msg.read_by === 'string' ? JSON.parse(msg.read_by) : (msg.read_by || []);
     if (readBy.length > 1) statusIcon = '<i class="fas fa-check-double status-icon read"></i>';
@@ -422,7 +434,6 @@ function renderMessage(msg) {
     html += `<div class="msg-meta">${time} ${isMe ? statusIcon : ''}</div><div class="reactions-container"></div>`;
     bubble.innerHTML = html;
     
-    // Реакции
     const reactions = typeof msg.reactions === 'string' ? JSON.parse(msg.reactions) : (msg.reactions || {});
     renderReactions(bubble, reactions);
 
@@ -484,15 +495,173 @@ function emitMsg(content, type, url, fileName, fileSize, isEncrypted) {
     const groupId = currentChat.type === 'group' ? currentChat.id : null;
     socket.emit('send_message', { senderId: currentUser.id, receiverId: currentChat.type === 'user' ? currentChat.id : null, groupId: groupId, group_id: groupId, content, type, fileUrl: url, fileName, fileSize, isEncrypted: isEncrypted, senderName: currentUser.nickname }); 
 }
-window.startCall = (e) => { if(e) e.stopPropagation(); if(currentChat.type === 'group') return alert("Звонки только тет-а-тет"); navigator.mediaDevices.getUserMedia({ audio: true, video: false }).then(stream => { setupCallUI(stream); currentPeer = new SimplePeer({ initiator: true, trickle: false, stream }); currentPeer.on('signal', data => socket.emit('call_user', { userToCall: currentChat.id, signalData: data, from: currentUser.id, name: currentUser.nickname })); currentPeer.on('stream', rs => { const v = document.getElementById('remote-video'); v.srcObject = rs; v.muted = false; }); }).catch(e => alert("Нет доступа к микрофону")); };
-window.acceptCall = () => { document.getElementById('incoming-call-modal').style.display = 'none'; navigator.mediaDevices.getUserMedia({ audio: true, video: false }).then(stream => { setupCallUI(stream); currentPeer = new SimplePeer({ initiator: false, trickle: false, stream }); currentPeer.on('signal', data => socket.emit('answer_call', { signal: data, to: incomingCallData.from })); currentPeer.on('stream', rs => { const v = document.getElementById('remote-video'); v.srcObject = rs; v.muted = false; }); currentPeer.signal(incomingCallData.signal); }).catch(e => alert("Ошибка: " + e)); };
-window.declineCall = () => { document.getElementById('incoming-call-modal').style.display = 'none'; socket.emit('end_call', { to: incomingCallData.from }); incomingCallData = null; };
-async function setupCallUI(stream) { localStream = stream; document.getElementById('active-call-modal').style.display = 'flex'; document.getElementById('local-video').srcObject = stream; setTimeout(loadDevices, 500); }
-async function loadDevices() { try { const devs = await navigator.mediaDevices.enumerateDevices(); const aud = document.getElementById('audio-source'); const vid = document.getElementById('video-source'); aud.innerHTML = ''; vid.innerHTML = ''; devs.forEach(d => { const opt = document.createElement('option'); opt.value = d.deviceId; opt.text = d.label || (d.kind + ' ' + (d.kind === 'audioinput' ? aud.length : vid.length)); if(d.kind === 'audioinput') aud.appendChild(opt); if(d.kind === 'videoinput') vid.appendChild(opt); }); const savedAud = localStorage.getItem('pref_audio'); const savedVid = localStorage.getItem('pref_video'); if(savedAud) aud.value = savedAud; if(savedVid) vid.value = savedVid; } catch(e) { console.error(e); } }
-window.changeDevice = async () => { const audioId = document.getElementById('audio-source').value; const videoId = document.getElementById('video-source').value; localStorage.setItem('pref_audio', audioId); localStorage.setItem('pref_video', videoId); try { const newStream = await navigator.mediaDevices.getUserMedia({ audio: { deviceId: { exact: audioId } }, video: { deviceId: { exact: videoId } } }); if(currentPeer) { const videoTrack = newStream.getVideoTracks()[0]; const audioTrack = newStream.getAudioTracks()[0]; const oldVideo = localStream.getVideoTracks()[0]; const oldAudio = localStream.getAudioTracks()[0]; if(videoTrack && oldVideo) currentPeer.replaceTrack(oldVideo, videoTrack, localStream); if(audioTrack && oldAudio) currentPeer.replaceTrack(oldAudio, audioTrack, localStream); } localStream = newStream; document.getElementById('local-video').srcObject = newStream; const vt = newStream.getVideoTracks()[0]; document.getElementById('btn-cam').classList.toggle('active', vt && vt.enabled); const at = newStream.getAudioTracks()[0]; document.getElementById('btn-mic').classList.toggle('active', at && at.enabled); } catch(e) { console.error(e); } };
-window.toggleMic = () => { if(!localStream) return; const track = localStream.getAudioTracks()[0]; if(track) { track.enabled = !track.enabled; document.getElementById('btn-mic').classList.toggle('active', track.enabled); } };
-window.toggleCam = () => { if(!localStream) return; const track = localStream.getVideoTracks()[0]; if(!track) return alert("Камера не активна. Выберите в списке."); track.enabled = !track.enabled; document.getElementById('btn-cam').classList.toggle('active', track.enabled); };
-window.endCall = () => { const partnerId = currentChat ? currentChat.id : (incomingCallData ? incomingCallData.from : null); if(partnerId) socket.emit('end_call', { to: partnerId }); if(currentPeer) currentPeer.destroy(); if(localStream) localStream.getTracks().forEach(t => t.stop()); currentPeer = null; localStream = null; incomingCallData = null; document.getElementById('active-call-modal').style.display = 'none'; document.getElementById('incoming-call-modal').style.display = 'none'; };
+
+// --- CALL LOGIC ---
+window.toggleDeviceMenu = (menuId) => {
+    const menu = document.getElementById(menuId);
+    const isShown = menu.classList.contains('show');
+    document.querySelectorAll('.device-menu').forEach(m => m.classList.remove('show'));
+    if (!isShown) {
+        menu.classList.add('show');
+        // Обновляем список устройств
+        navigator.mediaDevices.enumerateDevices().then(devices => {
+            menu.innerHTML = '';
+            const type = menuId === 'video-menu' ? 'videoinput' : 'audioinput';
+            devices.filter(d => d.kind === type).forEach(d => {
+                const div = document.createElement('div');
+                div.className = 'device-option';
+                if(type === 'videoinput' && currentVideoDevice === d.deviceId) div.classList.add('selected');
+                if(type === 'audioinput' && currentAudioDevice === d.deviceId) div.classList.add('selected');
+                div.textContent = d.label || `${type} ${menu.children.length + 1}`;
+                div.onclick = () => { changeDevice(type, d.deviceId); menu.classList.remove('show'); };
+                menu.appendChild(div);
+            });
+        });
+    }
+};
+
+window.startCall = (e) => { 
+    if(e) e.stopPropagation(); 
+    if(currentChat.type === 'group') return alert("Звонки только тет-а-тет"); 
+    setupCallUI(); 
+    navigator.mediaDevices.getUserMedia({ audio: true, video: false }).then(stream => { 
+        localStream = stream;
+        document.getElementById('local-video').srcObject = stream;
+        currentPeer = new SimplePeer({ initiator: true, trickle: false, stream }); 
+        currentPeer.on('signal', data => socket.emit('call_user', { userToCall: currentChat.id, signalData: data, from: currentUser.id, name: currentUser.nickname })); 
+        currentPeer.on('stream', rs => { document.getElementById('remote-video').srcObject = rs; }); 
+    }).catch(e => alert("Нет доступа: " + e)); 
+};
+
+window.acceptCall = () => { 
+    document.getElementById('incoming-call-modal').style.display = 'none'; 
+    setupCallUI();
+    navigator.mediaDevices.getUserMedia({ audio: true, video: false }).then(stream => { 
+        localStream = stream;
+        document.getElementById('local-video').srcObject = stream;
+        currentPeer = new SimplePeer({ initiator: false, trickle: false, stream }); 
+        currentPeer.on('signal', data => socket.emit('answer_call', { signal: data, to: incomingCallData.from })); 
+        currentPeer.on('stream', rs => { document.getElementById('remote-video').srcObject = rs; }); 
+        currentPeer.signal(incomingCallData.signal); 
+    }).catch(e => alert("Ошибка: " + e)); 
+};
+
+window.declineCall = () => { 
+    document.getElementById('incoming-call-modal').style.display = 'none'; 
+    socket.emit('end_call', { to: incomingCallData.from }); 
+    incomingCallData = null; 
+};
+
+function setupCallUI() { 
+    document.getElementById('active-call-modal').style.display = 'flex'; 
+}
+
+window.changeDevice = async (kind, deviceId) => {
+    if (kind === 'audioinput') currentAudioDevice = deviceId;
+    else currentVideoDevice = deviceId;
+
+    try {
+        const constraints = {
+            audio: currentAudioDevice ? { deviceId: { exact: currentAudioDevice } } : true,
+            video: currentVideoDevice ? { deviceId: { exact: currentVideoDevice } } : false
+        };
+        if(isScreenSharing) { constraints.video = false; } // Don't override screen
+
+        const newStream = await navigator.mediaDevices.getUserMedia(constraints);
+        
+        // Replace tracks
+        if(currentPeer) {
+            const senders = currentPeer._pc.getSenders();
+            newStream.getTracks().forEach(track => {
+                const sender = senders.find(s => s.track.kind === track.kind);
+                if(sender) sender.replaceTrack(track);
+            });
+        }
+
+        if(!isScreenSharing) {
+            localStream = newStream;
+            document.getElementById('local-video').srcObject = newStream;
+        } else {
+            // If screen sharing, only replace audio track in localStream
+            const audioTrack = newStream.getAudioTracks()[0];
+            if(audioTrack) {
+                const oldAudio = localStream.getAudioTracks()[0];
+                if(oldAudio) localStream.removeTrack(oldAudio);
+                localStream.addTrack(audioTrack);
+            }
+        }
+        
+    } catch(e) { console.error(e); }
+};
+
+window.toggleMic = () => { 
+    if(!localStream) return; 
+    const track = localStream.getAudioTracks()[0]; 
+    if(track) { 
+        track.enabled = !track.enabled; 
+        document.getElementById('btn-mic').classList.toggle('active', track.enabled); 
+        document.getElementById('btn-mic').innerHTML = track.enabled ? '<i class="fas fa-microphone"></i>' : '<i class="fas fa-microphone-slash"></i>';
+    } 
+};
+
+window.toggleCam = async () => { 
+    if(isScreenSharing) { alert("Сначала выключите демонстрацию экрана"); return; }
+    
+    // Если видео нет - включаем
+    if(!localStream.getVideoTracks().length) {
+        const vidStream = await navigator.mediaDevices.getUserMedia({ video: currentVideoDevice ? { deviceId: { exact: currentVideoDevice } } : true });
+        const vidTrack = vidStream.getVideoTracks()[0];
+        localStream.addTrack(vidTrack);
+        if(currentPeer) currentPeer.addTrack(vidTrack, localStream);
+        document.getElementById('local-video').srcObject = localStream;
+        document.getElementById('btn-cam').classList.add('active');
+    } else {
+        // Если есть - тоглим
+        const track = localStream.getVideoTracks()[0];
+        track.enabled = !track.enabled;
+        document.getElementById('btn-cam').classList.toggle('active', track.enabled);
+    }
+};
+
+window.startScreenShare = () => { document.getElementById('screen-share-modal').style.display = 'flex'; };
+
+window.confirmScreenShare = async (withAudio) => {
+    closeModal('screen-share-modal');
+    try {
+        const stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: withAudio });
+        isScreenSharing = true;
+        
+        const screenTrack = stream.getVideoTracks()[0];
+        // Заменяем видео дорожку
+        if(currentPeer) {
+            const senders = currentPeer._pc.getSenders();
+            const sender = senders.find(s => s.track.kind === 'video');
+            if(sender) sender.replaceTrack(screenTrack);
+            else currentPeer.addTrack(screenTrack, localStream); // Если видео не было
+        }
+        
+        document.getElementById('local-video').srcObject = stream;
+        
+        // Обработка остановки трансляции (кнопка браузера)
+        screenTrack.onended = () => {
+            isScreenSharing = false;
+            // Вернуть камеру если была? Пока просто черный экран или остановка
+            alert("Демонстрация завершена");
+        };
+        
+    } catch(e) { console.error(e); }
+};
+
+window.endCall = () => { 
+    const partnerId = currentChat ? currentChat.id : (incomingCallData ? incomingCallData.from : null); 
+    if(partnerId) socket.emit('end_call', { to: partnerId }); 
+    if(currentPeer) currentPeer.destroy(); 
+    if(localStream) localStream.getTracks().forEach(t => t.stop()); 
+    currentPeer = null; localStream = null; incomingCallData = null; isScreenSharing = false;
+    document.getElementById('active-call-modal').style.display = 'none'; 
+    document.getElementById('incoming-call-modal').style.display = 'none'; 
+};
+
 window.openProfileSettings = () => { document.getElementById('profile-modal').style.display = 'flex'; document.getElementById('edit-nickname').value = currentUser.nickname; document.getElementById('profile-big-username').textContent = '@' + currentUser.username; const avatarSrc = currentUser.avatar ? serverUrl + currentUser.avatar : 'https://placehold.co/100'; document.getElementById('profile-big-avatar').src = avatarSrc; };
 function formatBytes(bytes, decimals = 2) { if (!+bytes) return '0 B'; const k = 1024; const dm = decimals < 0 ? 0 : decimals; const sizes = ['B', 'KB', 'MB', 'GB']; const i = Math.floor(Math.log(bytes) / Math.log(k)); return `${parseFloat((bytes / Math.pow(k, i)).toFixed(dm))} ${sizes[i]}`; }
 window.copyUsername = () => { const fullId = "@" + currentUser.username; navigator.clipboard.writeText(fullId).then(() => { showToast("Ваш ID скопирован в буфер обмена"); }).catch(err => { console.error('Ошибка копирования: ', err); }); };
