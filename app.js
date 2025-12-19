@@ -535,21 +535,19 @@ window.cancelEdit = () => { editingMessageId = null; document.getElementById('me
 window.initDeleteMessage = () => { document.getElementById('delete-modal').style.display = 'flex'; };
 window.confirmDelete = (mode) => { socket.emit('delete_message', { messageId: selectedMessageId, mode: mode, groupId: currentChat.type === 'group' ? currentChat.id : null, receiverId: currentChat.type === 'user' ? currentChat.id : null, userId: currentUser.id }); closeModal('delete-modal'); };
 window.handleInputKey = (e) => { if(e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } };
-
-// E2EE UPLOAD
 window.sendMessage = async () => {
     const input = document.getElementById('message-input'); const txt = input.value.trim(); const fileInput = document.getElementById('file-input');
+    if(editingMessageId) { if(txt) { socket.emit('edit_message', { messageId: editingMessageId, newContent: txt, groupId: currentChat.type === 'group' ? currentChat.id : null, receiverId: currentChat.type === 'user' ? currentChat.id : null }); cancelEdit(); } return; }
+    if(!txt && !fileInput.files.length) return;
     
-    // ... (Edit logic skipped for brevity, standard)
-
-    // TEXT
+    // TEXT ENCRYPTION
     let encryptedText = txt; let isEncrypted = false;
     if (currentChat.type === 'user' && txt) { 
         const secret = getSharedSecret(currentChat.public_key); 
         if (secret) { encryptedText = encryptText(txt, secret); isEncrypted = true; } 
     }
 
-    // FILE
+    // FILE ENCRYPTION & UPLOAD
     if(fileInput.files.length) {
         const file = fileInput.files[0];
         const key = await generateFileKey();
@@ -608,15 +606,14 @@ function emitMsg(content, type, url, fileName, fileSize, isEncrypted) {
     socket.emit('send_message', { senderId: currentUser.id, receiverId: currentChat.type === 'user' ? currentChat.id : null, groupId: groupId, group_id: groupId, content, type, fileUrl: url, fileName, fileSize, isEncrypted: isEncrypted, senderName: currentUser.nickname }); 
 }
 
-// --- CALLS ---
-// ... (Standard WebRTC logic as before) ...
-// (I am keeping this part standard as requested full code, reusing previous reliable blocks)
+// --- CALL LOGIC ---
 window.toggleDeviceMenu = (menuId) => {
     const menu = document.getElementById(menuId);
     const isShown = menu.classList.contains('show');
     document.querySelectorAll('.device-menu').forEach(m => m.classList.remove('show'));
     if (!isShown) {
         menu.classList.add('show');
+        // Обновляем список устройств
         navigator.mediaDevices.enumerateDevices().then(devices => {
             menu.innerHTML = '';
             const type = menuId === 'video-menu' ? 'videoinput' : 'audioinput';
