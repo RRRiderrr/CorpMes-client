@@ -10,7 +10,7 @@ let editingMessageId = null;
 let selectedMessageId = null;
 let currentGroupDetails = null;
 
-// Настройки звонка
+// Call settings
 let currentAudioDevice = null;
 let currentVideoDevice = null;
 let isScreenSharing = false;
@@ -20,7 +20,6 @@ const ec = new EC('secp256k1');
 let myKeyPair = null;
 let sharedKeys = {};
 
-// ПОЛНЫЙ СПИСОК ЭМОДЗИ
 const emojiData = {
     "Smileys": ["😀","😃","😄","😁","😆","😅","🤣","😂","🙂","🙃","😉","😊","😇","🥰","😍","🤩","😘","😗","😙","😋","😛","😜","🤪","😝","🤑","🤗","🤭","🤫","🤔","🤐","🤨","😐","😑","😶","😏","😒","🙄","😬","🤥","😌","😔","😪","🤤","😴","😷","🤒","🤕","🤢","🤮","🤧","🥵","🥶","🥴","😵","🤯","🤠","🥳","😎","🤓","🧐","😕","🙁","😮","😯","😲","😳","🥺","😦","😧","😨","😰","😥","😢","😭","😱","😖","😣","😞","😓","😩","😫","🥱","😤","😡","😠","🤬","😈","👿","💀","☠️","💩","🤡","👹","👺","👻","👽","👾","🤖"],
     "Body": ["👋","🤚","🖐","✋","🖖","👌","🤏","✌️","🤞","🤟","🤘","🤙","👈","👉","👆","🖕","👇","☝️","👍","👎","✊","👊","🤛","🤜","👏","🙌","👐","🤲","🤝","🙏","✍️","💅","🤳","💪","🦵","🦶","👂","🦻","👃","🧠","🦷","🦴","👀","👁","👅","👄","💋","🩸"],
@@ -29,7 +28,6 @@ const emojiData = {
     "18+": ["🍆","🍑","🍌","🍒","🌮","🍩","🌭","💦","🛏️","🚿","🔥","👅","💋","👙","👠","💄","🔞"]
 };
 
-// ПОЛНЫЙ СПИСОК КЛЮЧЕВЫХ СЛОВ
 const keywordMap = {
     "привет": ["👋","🙂","✋"], "пока": ["👋","🚶"], "любовь": ["❤️","😍","🥰"], "сердце": ["❤️","💔","💖"],
     "смешно": ["😂","🤣","😆"], "лол": ["😂","🤣"], "ого": ["😮","😲","🤯"], "ок": ["👌","👍","✅"],
@@ -48,24 +46,14 @@ document.addEventListener('DOMContentLoaded', () => {
     if (serverUrl && savedUser && savedKey) {
         const userObj = JSON.parse(savedUser);
         fetch(`${serverUrl}/api/validate_user`, {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
+            method: 'POST', headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({ id: userObj.id, sessionToken: userObj.sessionToken })
         })
         .then(res => res.json())
         .then(data => {
-            if (data.valid) {
-                currentUser = userObj;
-                initCrypto(savedKey);
-                connectToServer();
-            } else window.logout();
+            if (data.valid) { currentUser = userObj; initCrypto(savedKey); connectToServer(); } else window.logout();
         })
-        .catch(err => {
-            // Если сервер не ответил, пробуем подключиться через сокеты (fallback)
-            currentUser = userObj;
-            initCrypto(savedKey);
-            connectToServer();
-        });
+        .catch(err => { currentUser = userObj; initCrypto(savedKey); connectToServer(); });
     }
     initEmojiPicker();
 });
@@ -220,7 +208,6 @@ function connectToServer() {
         });
         scrollToBottom(); 
     });
-
     socket.on('call_incoming', (data) => { if(currentPeer || incomingCallData) { socket.emit('call_busy'); return; } incomingCallData = data; document.getElementById('incoming-call-modal').style.display = 'flex'; document.getElementById('caller-name').textContent = data.name; });
     socket.on('call_accepted', (signal) => { if(currentPeer) currentPeer.signal(signal); });
     socket.on('call_busy', () => { alert("Абонент занят"); endCallUI(); });
@@ -391,7 +378,7 @@ function renderMessage(msg) {
 
     if (!isMe) {
         const img = document.createElement('img'); img.className = 'msg-avatar';
-        // Исправлено: Добавлен serverUrl к аватарке
+        // FIX: Ensure URL is constructed properly
         img.src = msg.senderAvatar ? serverUrl + msg.senderAvatar : 'https://placehold.co/40';
         img.onclick = () => openUserProfile({ id: msg.sender_id, nickname: msg.senderName || 'User', avatar: msg.senderAvatar, username: '?' });
         row.appendChild(img);
@@ -402,9 +389,12 @@ function renderMessage(msg) {
         e.preventDefault(); selectedMessageId = msg.id; const menu = document.getElementById('context-menu'); 
         const readersBtn = document.getElementById('show-readers-btn'); readersBtn.style.display = (currentChat.type === 'group') ? 'block' : 'none'; 
         
-        // Исправлено: Меню не обрезается
+        // FIX: Prevent menu overflow
         const menuWidth = 150; const menuHeight = 150; let x = e.pageX; let y = e.pageY;
-        if(x + menuWidth > window.innerWidth) x -= menuWidth; if(y + menuHeight > window.innerHeight) y -= menuHeight;
+        
+        if (x + menuWidth > window.innerWidth) x = window.innerWidth - menuWidth - 20;
+        if (y + menuHeight > window.innerHeight) y = window.innerHeight - menuHeight - 20;
+        
         menu.style.display = 'block'; menu.style.left = x + 'px'; menu.style.top = y + 'px'; 
     };
 
@@ -434,6 +424,7 @@ function renderMessage(msg) {
     html += `<div class="msg-meta">${time} ${isMe ? statusIcon : ''}</div><div class="reactions-container"></div>`;
     bubble.innerHTML = html;
     
+    // Реакции
     const reactions = typeof msg.reactions === 'string' ? JSON.parse(msg.reactions) : (msg.reactions || {});
     renderReactions(bubble, reactions);
 
@@ -657,6 +648,18 @@ window.endCall = () => {
     if(partnerId) socket.emit('end_call', { to: partnerId }); 
     if(currentPeer) currentPeer.destroy(); 
     if(localStream) localStream.getTracks().forEach(t => t.stop()); 
+    
+    // FIX PIP: Clear sources
+    // Force reload video element to detach PiP
+    const remoteVideo = document.getElementById('remote-video');
+    const localVideo = document.getElementById('local-video');
+    
+    remoteVideo.srcObject = null;
+    localVideo.srcObject = null;
+    
+    remoteVideo.load();
+    localVideo.load();
+
     currentPeer = null; localStream = null; incomingCallData = null; isScreenSharing = false;
     document.getElementById('active-call-modal').style.display = 'none'; 
     document.getElementById('incoming-call-modal').style.display = 'none'; 
