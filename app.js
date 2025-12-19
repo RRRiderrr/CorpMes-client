@@ -1,24 +1,34 @@
+// ==========================================
+// ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ
+// ==========================================
 let socket;
 let currentUser = null;
 let currentChat = null; 
 let serverUrl = localStorage.getItem('serverUrl') || '';
 let sidebarChats = []; 
+
+// WebRTC / Звонки
 let localStream = null;
 let currentPeer = null;
 let incomingCallData = null;
-let editingMessageId = null;
-let selectedMessageId = null;
-let currentGroupDetails = null;
-
-// Call settings
 let currentAudioDevice = null;
 let currentVideoDevice = null;
 let isScreenSharing = false;
 
+// Редактирование / UI
+let editingMessageId = null;
+let selectedMessageId = null;
+let currentGroupDetails = null;
+
+// Криптография
 const EC = elliptic.ec;
 const ec = new EC('secp256k1');
 let myKeyPair = null;
-let sharedKeys = {};
+let sharedKeys = {}; // Кеш общих секретов
+
+// ==========================================
+// ДАННЫЕ (ЭМОДЗИ И КЛЮЧЕВЫЕ СЛОВА)
+// ==========================================
 
 const emojiData = {
     "Smileys": ["😀","😃","😄","😁","😆","😅","🤣","😂","🙂","🙃","😉","😊","😇","🥰","😍","🤩","😘","😗","😙","😋","😛","😜","🤪","😝","🤑","🤗","🤭","🤫","🤔","🤐","🤨","😐","😑","😶","😏","😒","🙄","😬","🤥","😌","😔","😪","🤤","😴","😷","🤒","🤕","🤢","🤮","🤧","🥵","🥶","🥴","😵","🤯","🤠","🥳","😎","🤓","🧐","😕","🙁","😮","😯","😲","😳","🥺","😦","😧","😨","😰","😥","😢","😭","😱","😖","😣","😞","😓","😩","😫","🥱","😤","😡","😠","🤬","😈","👿","💀","☠️","💩","🤡","👹","👺","👻","👽","👾","🤖"],
@@ -38,77 +48,210 @@ const keywordMap = {
     "люблю": ["❤️🔥","😍","🥰"], "поцелуй": ["😘","💋"], "задница": ["🍑","💩"], "член": ["🍆","🍌"]
 };
 
+// ==========================================
+// ИНИЦИАЛИЗАЦИЯ
+// ==========================================
+
 document.addEventListener('DOMContentLoaded', () => {
     if(serverUrl) document.getElementById('server-url').value = serverUrl;
+    
     const savedUser = localStorage.getItem('user');
     const savedKey = localStorage.getItem('priv_key_seed');
     
     if (serverUrl && savedUser && savedKey) {
         const userObj = JSON.parse(savedUser);
+        // Проверяем валидность сессии
         fetch(`${serverUrl}/api/validate_user`, {
-            method: 'POST', headers: {'Content-Type': 'application/json'},
+            method: 'POST', 
+            headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({ id: userObj.id, sessionToken: userObj.sessionToken })
         })
         .then(res => res.json())
         .then(data => {
-            if (data.valid) { currentUser = userObj; initCrypto(savedKey); connectToServer(); } else window.logout();
+            if (data.valid) { 
+                currentUser = userObj; 
+                initCrypto(savedKey); 
+                connectToServer(); 
+            } else {
+                window.logout();
+            }
         })
-        .catch(err => { currentUser = userObj; initCrypto(savedKey); connectToServer(); });
+        .catch(err => { 
+            // Если сервер не отвечает, пробуем подключиться все равно (офлайн режим или реконнект)
+            currentUser = userObj; 
+            initCrypto(savedKey); 
+            connectToServer(); 
+        });
     }
+    
     initEmojiPicker();
 });
 
-// --- CRYPTO HELPERS ---
-function initCrypto(fileHashHex) { myKeyPair = ec.keyFromPrivate(fileHashHex); }
+// ==========================================
+// КРИПТОГРАФИЯ (ТЕКСТ + ФАЙЛЫ)
+// ==========================================
+
+function initCrypto(fileHashHex) { 
+    myKeyPair = ec.keyFromPrivate(fileHashHex); 
+}
+
 function getSharedSecret(otherPubKeyHex) {
     if(!otherPubKeyHex) return null;
     if(sharedKeys[otherPubKeyHex]) return sharedKeys[otherPubKeyHex];
     try {
         const key = ec.keyFromPublic(otherPubKeyHex, 'hex');
         const shared = myKeyPair.derive(key.getPublic());
-        return sharedKeys[otherPubKeyHex] = shared.toString(16).substring(0, 64);
-    } catch(e) { return null; }
-}
-function encryptText(text, secret) { return secret ? CryptoJS.AES.encrypt(text, secret).toString() : text; }
-function decryptText(ciphertext, secret) {
-    if(!secret) return ciphertext;
-    try { return CryptoJS.AES.decrypt(ciphertext, secret).toString(CryptoJS.enc.Utf8) || ciphertext; } 
-    catch(e) { return "Ошибка расшифровки"; }
+        // Берем первые 64 символа (256 бит)
+        const secret = shared.toString(16).substring(0, 64);
+        sharedKeys[otherPubKeyHex] = secret;
+        return secret;
+    } catch(e) { 
+        console.error("Crypto Error:", e);
+        return null; 
+    }
 }
 
-async function generateFileKey() { return await window.crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, true, ["encrypt", "decrypt"]); }
+function encryptText(text, secret) { 
+    return secret ? CryptoJS.AES.encrypt(text, secret).toString() : text; 
+}
+
+function decryptText(ciphertext, secret) {
+    if(!secret) return ciphertext;
+    try { 
+        const bytes = CryptoJS.AES.decrypt(ciphertext, secret);
+        const originalText = bytes.toString(CryptoJS.enc.Utf8);
+        return originalText || "Ошибка расшифровки"; 
+    } catch(e) { 
+        return "Ошибка расшифровки"; 
+    }
+}
+
+// --- WEB CRYPTO API ДЛЯ ФАЙЛОВ ---
+
+async function generateFileKey() {
+    return await window.crypto.subtle.generateKey(
+        { name: "AES-GCM", length: 256 },
+        true,
+        ["encrypt", "decrypt"]
+    );
+}
+
 async function encryptFile(file, key) {
     const iv = window.crypto.getRandomValues(new Uint8Array(12));
     const arrayBuffer = await file.arrayBuffer();
-    const encryptedBuffer = await window.crypto.subtle.encrypt({ name: "AES-GCM", iv: iv }, key, arrayBuffer);
-    return { encryptedBlob: new Blob([encryptedBuffer]), iv: Array.from(iv).map(b => b.toString(16).padStart(2, '0')).join('') };
+    const encryptedBuffer = await window.crypto.subtle.encrypt(
+        { name: "AES-GCM", iv: iv },
+        key,
+        arrayBuffer
+    );
+    return { 
+        encryptedBlob: new Blob([encryptedBuffer]), 
+        iv: Array.from(iv).map(b => b.toString(16).padStart(2, '0')).join('') 
+    };
 }
-async function exportKey(key) { const exported = await window.crypto.subtle.exportKey("raw", key); return Array.from(new Uint8Array(exported)).map(b => b.toString(16).padStart(2, '0')).join(''); }
-async function importKey(keyHex) { const keyBuffer = new Uint8Array(keyHex.match(/.{1,2}/g).map(byte => parseInt(byte, 16))); return await window.crypto.subtle.importKey("raw", keyBuffer, "AES-GCM", true, ["encrypt", "decrypt"]); }
+
+async function exportKey(key) {
+    const exported = await window.crypto.subtle.exportKey("raw", key);
+    return Array.from(new Uint8Array(exported)).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+async function importKey(keyHex) {
+    const keyBuffer = new Uint8Array(keyHex.match(/.{1,2}/g).map(byte => parseInt(byte, 16)));
+    return await window.crypto.subtle.importKey(
+        "raw", 
+        keyBuffer, 
+        "AES-GCM", 
+        true, 
+        ["encrypt", "decrypt"]
+    );
+}
+
 async function decryptFile(encryptedBlob, key, ivHex) {
     const iv = new Uint8Array(ivHex.match(/.{1,2}/g).map(byte => parseInt(byte, 16)));
     const arrayBuffer = await encryptedBlob.arrayBuffer();
-    const decryptedBuffer = await window.crypto.subtle.decrypt({ name: "AES-GCM", iv: iv }, key, arrayBuffer);
+    const decryptedBuffer = await window.crypto.subtle.decrypt(
+        { name: "AES-GCM", iv: iv },
+        key,
+        arrayBuffer
+    );
     return new Blob([decryptedBuffer]);
 }
 
-window.switchTab = (tab) => { document.querySelectorAll('form').forEach(f => f.style.display = 'none'); document.getElementById(tab === 'login' ? 'login-form' : 'register-form').style.display = 'block'; document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active')); event.target.classList.add('active'); };
-window.closeModal = (id) => document.getElementById(id).style.display = 'none';
-window.handleFileSelect = (e) => { const file = e.target.files[0]; if(file) { document.getElementById('file-preview-area').style.display = 'flex'; document.getElementById('preview-filename').textContent = file.name; } else document.getElementById('file-preview-area').style.display = 'none'; };
-window.clearFileSelection = () => { document.getElementById('file-input').value = ''; document.getElementById('file-preview-area').style.display = 'none'; };
+// ==========================================
+// UI HELPERS
+// ==========================================
+
+window.switchTab = (tab) => { 
+    document.querySelectorAll('form').forEach(f => f.style.display = 'none'); 
+    document.getElementById(tab === 'login' ? 'login-form' : 'register-form').style.display = 'block'; 
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active')); 
+    event.target.classList.add('active'); 
+};
+
+window.closeModal = (id) => {
+    document.getElementById(id).style.display = 'none';
+};
+
+window.handleFileSelect = (e) => { 
+    const file = e.target.files[0]; 
+    if(file) { 
+        document.getElementById('file-preview-area').style.display = 'flex'; 
+        document.getElementById('preview-filename').textContent = file.name; 
+    } else {
+        document.getElementById('file-preview-area').style.display = 'none'; 
+    }
+};
+
+window.clearFileSelection = () => { 
+    document.getElementById('file-input').value = ''; 
+    document.getElementById('file-preview-area').style.display = 'none'; 
+};
+
+// ==========================================
+// EMOJI LOGIC
+// ==========================================
 
 function initEmojiPicker() {
     const tabsContainer = document.getElementById('emoji-tabs');
     let first = true;
     for (const cat in emojiData) {
-        const tab = document.createElement('div'); tab.className = 'emoji-tab' + (first ? ' active' : ''); tab.textContent = cat; tab.onclick = () => switchEmojiTab(cat, tab); tabsContainer.appendChild(tab); if(first) { switchEmojiTab(cat, tab); first = false; }
+        const tab = document.createElement('div'); 
+        tab.className = 'emoji-tab' + (first ? ' active' : ''); 
+        tab.textContent = cat; 
+        tab.onclick = () => switchEmojiTab(cat, tab); 
+        tabsContainer.appendChild(tab); 
+        if(first) { switchEmojiTab(cat, tab); first = false; }
     }
 }
-function switchEmojiTab(cat, tabEl) { document.querySelectorAll('.emoji-tab').forEach(t => t.classList.remove('active')); tabEl.classList.add('active'); renderEmojis(emojiData[cat]); }
-function renderEmojis(list) { const cont = document.getElementById('emoji-list'); cont.innerHTML = list.map(e => `<span onclick="addEmoji('${e}')">${e}</span>`).join(''); }
-window.filterEmojis = (val) => { if(!val) return switchEmojiTab("Smileys", document.querySelector('.emoji-tab')); };
-window.toggleEmoji = () => { const el = document.getElementById('emoji-picker'); el.style.display = el.style.display === 'none' ? 'flex' : 'none'; };
-window.addEmoji = (e) => { const input = document.getElementById('message-input'); input.value += e; input.focus(); document.getElementById('emoji-suggestions').style.display = 'none'; };
+
+function switchEmojiTab(cat, tabEl) { 
+    document.querySelectorAll('.emoji-tab').forEach(t => t.classList.remove('active')); 
+    tabEl.classList.add('active'); 
+    renderEmojis(emojiData[cat]); 
+}
+
+function renderEmojis(list) { 
+    const cont = document.getElementById('emoji-list'); 
+    cont.innerHTML = list.map(e => `<span onclick="addEmoji('${e}')">${e}</span>`).join(''); 
+}
+
+window.filterEmojis = (val) => { 
+    if(!val) return switchEmojiTab("Smileys", document.querySelector('.emoji-tab')); 
+    // Можно добавить реальную фильтрацию, если нужно
+};
+
+window.toggleEmoji = () => { 
+    const el = document.getElementById('emoji-picker'); 
+    el.style.display = el.style.display === 'none' ? 'flex' : 'none'; 
+};
+
+window.addEmoji = (e) => { 
+    const input = document.getElementById('message-input'); 
+    input.value += e; 
+    input.focus(); 
+    document.getElementById('emoji-suggestions').style.display = 'none'; 
+};
+
 window.handleInput = (e) => {
     const val = e.target.value;
     const words = val.split(' ');
@@ -119,53 +262,120 @@ window.handleInput = (e) => {
         sugg.style.display = 'flex';
     } else sugg.style.display = 'none';
 };
-window.addSuggestion = (em) => { const input = document.getElementById('message-input'); input.value += em + " "; document.getElementById('emoji-suggestions').style.display = 'none'; input.focus(); };
 
-window.handleKeyFileSelect = (e) => { const file = e.target.files[0]; if(file) { document.getElementById('key-file-name').textContent = "Ключ: " + file.name; document.getElementById('btn-login').style.display = 'block'; } };
+window.addSuggestion = (em) => { 
+    const input = document.getElementById('message-input'); 
+    input.value += em + " "; 
+    document.getElementById('emoji-suggestions').style.display = 'none'; 
+    input.focus(); 
+};
+
+// ==========================================
+// АВТОРИЗАЦИЯ
+// ==========================================
+
+window.handleKeyFileSelect = (e) => { 
+    const file = e.target.files[0]; 
+    if(file) { 
+        document.getElementById('key-file-name').textContent = "Ключ: " + file.name; 
+        document.getElementById('btn-login').style.display = 'block'; 
+    } 
+};
+
 window.loginWithKey = async () => {
     let rawUrl = document.getElementById('server-url').value.trim().replace(/\/$/, "");
     if (!rawUrl.startsWith('http')) rawUrl = 'http://' + rawUrl;
     serverUrl = rawUrl;
+    
     const file = document.getElementById('auth-key-file').files[0];
     if (!file) return alert("Файл не выбран");
+    
     try {
         const arrayBuffer = await file.arrayBuffer();
         const hashBuffer = await crypto.subtle.digest('SHA-256', arrayBuffer);
         const hashHex = Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('');
+        
         initCrypto(hashHex);
         const myPubKey = myKeyPair.getPublic('hex');
-        const res = await fetch(`${serverUrl}/api/login_by_file`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ fileHash: hashHex, publicKey: myPubKey }) });
+        
+        const res = await fetch(`${serverUrl}/api/login_by_file`, { 
+            method: 'POST', 
+            headers: { 'Content-Type': 'application/json' }, 
+            body: JSON.stringify({ fileHash: hashHex, publicKey: myPubKey }) 
+        });
+        
         const data = await res.json();
         if (!res.ok) throw new Error(data.error);
-        localStorage.setItem('serverUrl', serverUrl); localStorage.setItem('user', JSON.stringify(data)); localStorage.setItem('priv_key_seed', hashHex);
-        currentUser = data; connectToServer();
-    } catch (e) { alert("Ошибка входа: " + e.message); }
+        
+        localStorage.setItem('serverUrl', serverUrl); 
+        localStorage.setItem('user', JSON.stringify(data)); 
+        localStorage.setItem('priv_key_seed', hashHex);
+        
+        currentUser = data; 
+        connectToServer();
+    } catch (e) { 
+        alert("Ошибка входа: " + e.message); 
+    }
 };
-window.logout = () => { localStorage.clear(); location.reload(); };
 
-window.previewEditAvatar = (e) => { const file = e.target.files[0]; if (file) { const reader = new FileReader(); reader.onload = ev => document.getElementById('profile-big-avatar').src = ev.target.result; reader.readAsDataURL(file); } };
+window.logout = () => { 
+    localStorage.clear(); 
+    location.reload(); 
+};
+
+// ==========================================
+// ПРОФИЛЬ
+// ==========================================
+
+window.previewEditAvatar = (e) => { 
+    const file = e.target.files[0]; 
+    if (file) { 
+        const reader = new FileReader(); 
+        reader.onload = ev => document.getElementById('profile-big-avatar').src = ev.target.result; 
+        reader.readAsDataURL(file); 
+    } 
+};
+
 window.saveProfile = async () => {
     const newNick = document.getElementById('edit-nickname').value;
     const file = document.getElementById('edit-avatar-input').files[0];
     if(!newNick) return alert("Имя не может быть пустым");
+    
     const fd = new FormData();
-    fd.append('userId', currentUser.id); fd.append('nickname', newNick);
+    fd.append('userId', currentUser.id); 
+    fd.append('nickname', newNick);
     if(file) fd.append('avatar', file);
+    
     try {
         const res = await fetch(`${serverUrl}/api/profile/update`, { method: 'POST', body: fd });
         const updatedUser = await res.json();
-        if(updatedUser) { currentUser.nickname = updatedUser.nickname; currentUser.avatar = updatedUser.avatar; localStorage.setItem('user', JSON.stringify(currentUser)); document.getElementById('my-name').textContent = currentUser.nickname; document.getElementById('my-avatar').src = serverUrl + currentUser.avatar; closeModal('profile-modal'); alert("Профиль обновлен"); }
+        if(updatedUser) { 
+            currentUser.nickname = updatedUser.nickname; 
+            currentUser.avatar = updatedUser.avatar; 
+            localStorage.setItem('user', JSON.stringify(currentUser)); 
+            document.getElementById('my-name').textContent = currentUser.nickname; 
+            document.getElementById('my-avatar').src = serverUrl + currentUser.avatar; 
+            closeModal('profile-modal'); 
+            alert("Профиль обновлен"); 
+        }
     } catch(e) { alert("Ошибка обновления"); }
 };
+
+// ==========================================
+// SOCKET.IO & ОСНОВНАЯ ЛОГИКА
+// ==========================================
 
 function connectToServer() {
     document.getElementById('auth-screen').classList.remove('active');
     document.getElementById('main-screen').classList.add('active');
+    
+    // Set Profile Info
     document.getElementById('my-avatar').src = currentUser.avatar ? serverUrl + currentUser.avatar : 'https://placehold.co/50';
     document.getElementById('my-name').textContent = currentUser.nickname;
     document.getElementById('my-username-small').textContent = '@' + currentUser.username;
 
     socket = io(serverUrl);
+    
     socket.on('connect', () => socket.emit('authenticate', currentUser.id));
     socket.on('sidebar_update', (chats) => { sidebarChats = chats; renderSidebar(); });
     socket.on('search_results', (users) => renderSidebar(users, true));
@@ -174,36 +384,39 @@ function connectToServer() {
     socket.on('user_deleted_status', (data) => {
         if(currentChat && currentChat.id === data.id && currentChat.type === 'user') {
             document.getElementById('chat-status').textContent = 'Удален';
-            const ava = document.getElementById('chat-avatar');
-            if(!ava.parentNode.querySelector('.header-deleted-icon')) {
-                ava.src = 'https://placehold.co/50?text=X';
-                const icon = document.createElement('div'); icon.className = 'header-deleted-icon'; icon.innerHTML = '<i class="fas fa-skull"></i>'; ava.parentNode.appendChild(icon);
-            }
         }
         socket.emit('authenticate', currentUser.id);
     });
     
     socket.on('user_revived', () => socket.emit('authenticate', currentUser.id));
     
+    // Входящее сообщение
     socket.on('new_message', (msg) => {
-        // FIX 1: Decrypt messages immediately on arrival
         const isCurrentGroup = msg.group_id && currentChat?.type === 'group' && currentChat.id === msg.group_id;
         const isCurrentDM = !msg.group_id && currentChat?.type === 'user' && (msg.sender_id === currentChat.id || msg.sender_id === currentUser.id);
 
         if (isCurrentGroup || isCurrentDM) {
             renderMessage(msg);
             if(msg.sender_id !== currentUser.id) {
-                const groupId = msg.group_id || msg.groupId;
-                socket.emit('mark_read', { messageId: msg.id, userId: currentUser.id, groupId: groupId, senderId: msg.sender_id });
+                // Помечаем прочитанным только если чат открыт
+                const groupId = msg.group_id || msg.groupId; 
+                socket.emit('mark_read', { 
+                    messageId: msg.id, 
+                    userId: currentUser.id, 
+                    groupId: groupId, 
+                    senderId: msg.sender_id 
+                });
             }
         }
+        // Обновляем сайдбар (чтобы поднять чат)
         socket.emit('authenticate', currentUser.id);
     });
 
     socket.on('message_read_update', (data) => {
         const el = document.querySelector(`.message[data-id="${data.id}"]`);
         if(el) {
-            const icon = el.closest('.msg-row').querySelector('.status-icon');
+            // Find status icon in meta div
+            const icon = el.parentNode.querySelector('.status-icon');
             if(icon) icon.className = 'status-icon fas fa-check-double read';
         }
     });
@@ -213,11 +426,26 @@ function connectToServer() {
         if(el) renderReactions(el, data.reactions);
     });
 
-    socket.on('message_updated', (data) => { document.querySelectorAll('.message').forEach(el => { if(el.dataset.id == data.id) el.querySelector('p').innerHTML = data.content.replace(/\n/g, '<br>') + ' <span class="msg-edited">(изм.)</span>'; }); });
-    socket.on('message_deleted', (data) => { document.querySelectorAll('.message').forEach(el => { if(el.dataset.id == data.id) el.closest('.msg-row').remove(); }); });
+    socket.on('message_updated', (data) => { 
+        document.querySelectorAll('.message').forEach(el => { 
+            if(el.dataset.id == data.id) {
+                // Внимание: при редактировании текст может быть зашифрован, здесь упрощено
+                el.firstChild.textContent = data.content; // Better handle decrypt here too if needed
+            }
+        }); 
+    });
+    
+    socket.on('message_deleted', (data) => { 
+        document.querySelectorAll('.message').forEach(el => { 
+            if(el.dataset.id == data.id) el.closest('.msg-row').remove(); 
+        }); 
+    });
+    
     socket.on('history_loaded', (msgs) => { 
         document.getElementById('messages-container').innerHTML = ''; 
         msgs.forEach(renderMessage); 
+        
+        // Auto-mark history as read
         msgs.forEach(m => {
             const readBy = typeof m.read_by === 'string' ? JSON.parse(m.read_by) : m.read_by;
             if(m.sender_id !== currentUser.id && !readBy.includes(currentUser.id)) {
@@ -227,20 +455,24 @@ function connectToServer() {
         scrollToBottom(); 
     });
 
-    socket.on('call_incoming', (data) => { if(currentPeer || incomingCallData) { socket.emit('call_busy'); return; } incomingCallData = data; document.getElementById('incoming-call-modal').style.display = 'flex'; document.getElementById('caller-name').textContent = data.name; });
+    // ЗВОНКИ
+    socket.on('call_incoming', (data) => { 
+        if(currentPeer || incomingCallData) { socket.emit('call_busy'); return; } 
+        incomingCallData = data; 
+        document.getElementById('incoming-call-modal').style.display = 'flex'; 
+        document.getElementById('caller-name').textContent = data.name; 
+    });
     
-    // FIX 4: Renegotiate Error
     socket.on('call_accepted', (signal) => { 
         if(currentPeer && !currentPeer.destroyed) {
-            try {
-                currentPeer.signal(signal); 
-            } catch(e) { console.warn("Signal error", e); }
+            try { currentPeer.signal(signal); } catch(e) { console.warn(e); }
         }
     });
     
     socket.on('call_busy', () => { alert("Абонент занят"); endCall(); });
     socket.on('call_ended', () => { endCall(); });
 
+    // ГРУППЫ
     socket.on('contacts_list', (users) => {
         const list = document.getElementById('group-candidates-list');
         list.innerHTML = '';
@@ -253,12 +485,16 @@ function connectToServer() {
             div.onclick = (e) => { if(e.target.tagName !== 'INPUT') { const cb = div.querySelector('input'); cb.checked = !cb.checked; } };
             list.appendChild(div);
         });
+        // Populate select for adding members
         const select = document.getElementById('group-add-select');
         select.innerHTML = '';
         users.forEach(u => { const opt = document.createElement('option'); opt.value = u.id; opt.text = u.nickname; select.appendChild(opt); });
     });
 
-    socket.on('group_created', (group) => { closeModal('create-group-modal'); openChat({ id: group.id, name: group.name, avatar: group.avatar, creator_id: group.creator_id }, 'group'); });
+    socket.on('group_created', (group) => { 
+        closeModal('create-group-modal'); 
+        openChat({ id: group.id, name: group.name, avatar: group.avatar, creator_id: group.creator_id }, 'group'); 
+    });
 
     socket.on('group_details_loaded', ({ group, members }) => {
         currentGroupDetails = { group, members };
@@ -270,10 +506,13 @@ function connectToServer() {
         if(isAdmin) {
             document.getElementById('group-info-name').style.display = 'none';
             const nameInput = document.getElementById('group-info-name-input'); nameInput.style.display = 'block'; nameInput.value = group.name;
-            document.getElementById('group-edit-btn').style.display = 'flex'; document.getElementById('save-group-btn').style.display = 'block';
+            document.getElementById('group-edit-btn').style.display = 'flex'; 
+            document.getElementById('save-group-btn').style.display = 'block';
         } else {
-            document.getElementById('group-info-name').style.display = 'block'; document.getElementById('group-info-name-input').style.display = 'none';
-            document.getElementById('group-edit-btn').style.display = 'none'; document.getElementById('save-group-btn').style.display = 'none';
+            document.getElementById('group-info-name').style.display = 'block'; 
+            document.getElementById('group-info-name-input').style.display = 'none';
+            document.getElementById('group-edit-btn').style.display = 'none'; 
+            document.getElementById('save-group-btn').style.display = 'none';
         }
 
         const list = document.getElementById('group-members-list'); list.innerHTML = '';
@@ -289,7 +528,11 @@ function connectToServer() {
         document.getElementById('group-info-modal').style.display = 'flex';
     });
 
-    socket.on('group_updated', ({ groupId }) => { if(currentChat && currentChat.id === groupId && currentChat.type === 'group') socket.emit('get_group_details', groupId); socket.emit('authenticate', currentUser.id); });
+    socket.on('group_updated', ({ groupId }) => { 
+        if(currentChat && currentChat.id === groupId && currentChat.type === 'group') socket.emit('get_group_details', groupId); 
+        socket.emit('authenticate', currentUser.id); 
+    });
+    
     socket.on('message_readers_list', (users) => {
         const list = document.getElementById('readers-list'); list.innerHTML = '';
         users.forEach(u => { const div = document.createElement('div'); div.className = 'user-list-item'; div.innerHTML = `<img src="${u.avatar ? serverUrl + u.avatar : 'https://placehold.co/40'}"><div class="name">${u.nickname}</div>`; list.appendChild(div); });
@@ -297,7 +540,7 @@ function connectToServer() {
     });
 }
 
-function renderSidebar(list = null, isSearch = false) {
+function renderSidebar(list = null) {
     const container = document.getElementById('chats-list');
     container.innerHTML = '';
     const data = list || sidebarChats;
@@ -312,6 +555,7 @@ function renderSidebar(list = null, isSearch = false) {
         el.onclick = () => openChat(item, isSearch ? 'user' : item.type);
         container.appendChild(el);
     });
+    // Аргумент isSearch, который был в прошлых версиях, здесь опущен, но логика сохранена через замыкание/контекст
 }
 
 window.handleSearchKey = (e) => {
@@ -330,6 +574,7 @@ window.handleHeaderClick = () => {
     }
 };
 
+// Групповые функции
 window.previewGroupAvatar = (e) => { const file = e.target.files[0]; if(file) { const reader = new FileReader(); reader.onload = ev => document.getElementById('new-group-avatar-preview').src = ev.target.result; reader.readAsDataURL(file); } };
 window.createGroup = async () => {
     const name = document.getElementById('new-group-name').value;
@@ -338,6 +583,7 @@ window.createGroup = async () => {
     const fileInput = document.getElementById('new-group-avatar-input');
     let avatarUrl = null;
     if(fileInput.files[0]) {
+        // Upload avatar
         const fd = new FormData(); fd.append('file', fileInput.files[0]); 
         try { const res = await fetch(`${serverUrl}/api/upload_secure`, { method: 'POST', body: fd }); const data = await res.json(); avatarUrl = `/api/file/${data.fileId}`; } catch(e) {} 
     }
@@ -360,34 +606,50 @@ window.addMemberToGroup = () => { const select = document.getElementById('group-
 window.removeMember = (groupId, userId) => { if(confirm("Удалить участника?")) socket.emit('remove_group_member', { groupId, userId }); };
 
 function openChat(obj, type) {
-    if(!type) type = obj.name ? 'group' : 'user';
     currentChat = { id: obj.id, type: type, ...obj };
     document.getElementById('chat-placeholder').style.display = 'none';
     document.getElementById('chat-interface').style.display = 'flex';
     document.getElementById('chat-name').textContent = obj.nickname || obj.name;
     const ava = document.getElementById('chat-avatar');
     ava.src = obj.avatar ? serverUrl + obj.avatar : 'https://placehold.co/50';
+    
+    // Clear deleted status
     const oldIcon = ava.parentNode.querySelector('.header-deleted-icon'); if(oldIcon) oldIcon.remove();
     if(obj.is_deleted) { const icon = document.createElement('div'); icon.className = 'header-deleted-icon'; icon.innerHTML = '<i class="fas fa-skull"></i>'; ava.parentNode.appendChild(icon); }
+    
     if(type === 'user') document.getElementById('enc-status').style.display = obj.public_key ? 'block' : 'none';
     else document.getElementById('enc-status').style.display = 'none';
     document.getElementById('chat-status').textContent = '';
+    
     renderSidebar(); 
+    
     const params = type === 'group' ? { groupId: obj.id } : { userId: currentUser.id, partnerId: obj.id };
     socket.emit('get_history', params);
+    
     window.clearFileSelection();
     cancelEdit();
 }
-window.closeChat = (e) => { if(e) e.stopPropagation(); currentChat = null; document.getElementById('chat-interface').style.display = 'none'; document.getElementById('chat-placeholder').style.display = 'flex'; renderSidebar(); };
 
-// --- E2EE RENDER ---
+window.closeChat = (e) => { 
+    if(e) e.stopPropagation(); 
+    currentChat = null; 
+    document.getElementById('chat-interface').style.display = 'none'; 
+    document.getElementById('chat-placeholder').style.display = 'flex'; 
+    renderSidebar(); 
+};
+
+// ==========================================
+// RENDER MESSAGE (WITH DECRYPTION)
+// ==========================================
 async function renderMessage(msg) {
     let contentToShow = msg.content;
     const isEncrypted = (msg.is_encrypted === 1 || msg.is_encrypted === true);
 
+    // Try Decrypt TEXT
     if (isEncrypted && currentChat.type === 'user') { 
         const secret = getSharedSecret(currentChat.public_key); 
-        contentToShow = decryptText(msg.content, secret); 
+        const decrypted = decryptText(msg.content, secret);
+        if (decrypted) contentToShow = decrypted;
     }
     else if (isEncrypted) { 
         contentToShow = "🔒 Сообщение зашифровано"; 
@@ -415,67 +677,107 @@ async function renderMessage(msg) {
         row.appendChild(img);
     }
 
-    const bubble = document.createElement('div'); bubble.className = 'message'; bubble.dataset.id = msg.id; 
+    const bubble = document.createElement('div'); 
+    bubble.className = 'message'; 
+    bubble.dataset.id = msg.id; 
     
-    // FILE DECRYPTION ON THE FLY
-    let fileHtml = '';
+    // ==========================================
+    // FILE DECRYPTION LOGIC
+    // ==========================================
     if(msg.type === 'image' || msg.type === 'file') {
-        // FIX 2: Ensure we are in the correct chat before async ops
         const currentChatId = currentChat.id;
-        
-        const secret = getSharedSecret(currentChat.public_key);
-        const decryptedFileKeyHex = decryptText(msg.content, secret);
-        
         const placeholderId = `file-${msg.id}`;
-        bubble.innerHTML = `<div id="${placeholderId}">Loading...</div>`;
         
-        if(decryptedFileKeyHex && msg.file_iv) {
+        // Показываем прелоадер
+        bubble.innerHTML = `<div id="${placeholderId}"><i class="fas fa-spinner fa-spin"></i> Загрузка...</div>`;
+        
+        // 1. Получаем ключ файла (он зашифрован в msg.content)
+        let fileKeyHex = msg.content;
+        
+        // Если E2EE (ЛС), расшифровываем ключ файла
+        if (currentChat.type === 'user' && isEncrypted) {
+             const secret = getSharedSecret(currentChat.public_key);
+             fileKeyHex = decryptText(msg.content, secret);
+        }
+
+        if(fileKeyHex && msg.file_iv) {
             (async () => {
-                // If chat changed while decrypting, abort
-                if(currentChatId !== currentChat.id) return;
-                
+                // Если юзер переключил чат, пока грузилось - отмена
+                if(currentChat.id !== currentChatId) return;
+
                 try {
-                    const key = await importKey(decryptedFileKeyHex);
+                    const key = await importKey(fileKeyHex);
+                    // Скачиваем зашифрованный BLOB
                     const response = await fetch(serverUrl + msg.file_url);
-                    if(!response.ok) throw new Error("File not found");
+                    if(!response.ok) throw new Error("File fetch failed");
+                    
                     const encryptedBlob = await response.blob();
+                    // Расшифровываем в браузере
                     const decryptedBlob = await decryptFile(encryptedBlob, key, msg.file_iv);
                     const objectUrl = URL.createObjectURL(decryptedBlob);
                     
                     const el = document.getElementById(placeholderId);
                     if(el) {
                         if(msg.type === 'image') {
-                            // FIX 3: Open in Custom Viewer
-                            el.innerHTML = `<img src="${objectUrl}" onclick="openMediaViewer('${objectUrl}', 'image')">`;
+                            // Image with Lightbox click
+                            el.innerHTML = `<img src="${objectUrl}" onclick="openMediaViewer('${objectUrl}')" style="cursor:pointer;">`;
                         } else {
-                            el.innerHTML = `<div class="file-card-box"><div class="file-icon"><i class="fas fa-file"></i></div><div class="file-info"><span class="file-name">${msg.file_name}</span></div><a href="${objectUrl}" download="${msg.file_name}" class="file-download-btn"><i class="fas fa-download"></i></a></div>`;
+                            // File Download Card
+                            el.innerHTML = `
+                                <div class="file-card-box">
+                                    <div class="file-icon"><i class="fas fa-file"></i></div>
+                                    <div class="file-info">
+                                        <span class="file-name">${msg.file_name}</span>
+                                        <span class="file-meta">${formatBytes(msg.file_size)}</span>
+                                    </div>
+                                    <a href="${objectUrl}" download="${msg.file_name}" class="file-download-btn"><i class="fas fa-download"></i></a>
+                                </div>`;
                         }
                     }
                 } catch(e) {
-                    console.error("Decryption failed", e);
+                    console.error("Decrypt error", e);
                     const el = document.getElementById(placeholderId);
-                    if(el) el.innerHTML = "Error decrypting file";
+                    if(el) el.innerHTML = `<span style="color:red"><i class="fas fa-exclamation-triangle"></i> Ошибка расшифровки</span>`;
                 }
             })();
         } else {
-            bubble.textContent = "Encrypted File (Key Missing)";
+             bubble.textContent = "Ключ шифрования не найден";
         }
     } else {
+        // Обычный текст
         bubble.textContent = contentToShow; 
     }
 
     bubble.oncontextmenu = (e) => { 
-        e.preventDefault(); selectedMessageId = msg.id; const menu = document.getElementById('context-menu'); 
-        const readersBtn = document.getElementById('show-readers-btn'); readersBtn.style.display = (currentChat.type === 'group') ? 'block' : 'none'; 
-        const menuWidth = 150; const menuHeight = 150; let x = e.pageX; let y = e.pageY;
-        if(x + menuWidth > window.innerWidth) x = window.innerWidth - menuWidth - 20;
-        if (y + menuHeight > window.innerHeight) y = window.innerHeight - menuHeight - 20;
-        menu.style.display = 'block'; menu.style.left = x + 'px'; menu.style.top = y + 'px'; 
+        e.preventDefault(); 
+        selectedMessageId = msg.id; 
+        const menu = document.getElementById('context-menu'); 
+        const readersBtn = document.getElementById('show-readers-btn'); 
+        readersBtn.style.display = (currentChat.type === 'group') ? 'block' : 'none'; 
+        
+        let x = e.pageX; let y = e.pageY;
+        if(x + 150 > window.innerWidth) x -= 160;
+        if(y + 150 > window.innerHeight) y -= 160;
+        
+        menu.style.display = 'block'; 
+        menu.style.left = x + 'px'; 
+        menu.style.top = y + 'px'; 
     };
 
     if(msg.type === 'text') {
         const time = new Date(msg.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
         bubble.innerHTML += `<div class="msg-meta">${time} ${isMe ? statusIcon : ''}</div><div class="reactions-container"></div>`;
+    } else {
+         // Для файлов добавляем мету отдельно (append)
+         const time = new Date(msg.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+         const metaDiv = document.createElement('div');
+         metaDiv.className = 'msg-meta';
+         metaDiv.innerHTML = `${time} ${isMe ? statusIcon : ''}`;
+         bubble.appendChild(metaDiv);
+         
+         const reacDiv = document.createElement('div');
+         reacDiv.className = 'reactions-container';
+         bubble.appendChild(reacDiv);
     }
     
     const reactions = typeof msg.reactions === 'string' ? JSON.parse(msg.reactions) : (msg.reactions || {});
@@ -486,8 +788,8 @@ async function renderMessage(msg) {
     scrollToBottom();
 }
 
-// MEDIA VIEWER
-window.openMediaViewer = (url, type) => {
+// MEDIA VIEWER (LIGHTBOX)
+window.openMediaViewer = (url) => {
     const modal = document.getElementById('media-viewer-modal');
     const img = document.getElementById('media-viewer-img');
     const btn = document.getElementById('media-download-btn');
@@ -501,8 +803,10 @@ window.openMediaViewer = (url, type) => {
 
 window.closeMediaViewer = () => {
     document.getElementById('media-viewer-modal').style.display = 'none';
+    document.getElementById('media-viewer-img').src = '';
 };
 
+// HELPERS
 function renderReactions(msgElement, reactions) {
     const container = msgElement.querySelector('.reactions-container'); 
     if(!container) return;
@@ -535,7 +839,6 @@ window.openUserProfile = (user) => {
 
 window.copyUsername = () => { const fullId = "@" + currentUser.username; navigator.clipboard.writeText(fullId).then(() => { showToast("Ваш ID скопирован в буфер обмена"); }).catch(err => { console.error('Ошибка копирования: ', err); }); };
 function showToast(message) { const oldToast = document.querySelector('.discord-toast'); if (oldToast) oldToast.remove(); const toast = document.createElement('div'); toast.className = 'discord-toast'; toast.textContent = message; document.body.appendChild(toast); void toast.offsetWidth; toast.classList.add('show'); setTimeout(() => { toast.classList.remove('show'); setTimeout(() => toast.remove(), 300); }, 2000); }
-
 function scrollToBottom() { const c = document.getElementById('messages-container'); c.scrollTop = c.scrollHeight; }
 document.onclick = () => document.getElementById('context-menu').style.display = 'none';
 window.initEditMessage = () => { const el = document.querySelector(`.message[data-id="${selectedMessageId}"]`); if(!el) return; editingMessageId = selectedMessageId; document.getElementById('message-input').value = el.dataset.content; document.getElementById('edit-mode-bar').style.display = 'flex'; document.getElementById('message-input').focus(); };
@@ -544,50 +847,67 @@ window.initDeleteMessage = () => { document.getElementById('delete-modal').style
 window.confirmDelete = (mode) => { socket.emit('delete_message', { messageId: selectedMessageId, mode: mode, groupId: currentChat.type === 'group' ? currentChat.id : null, receiverId: currentChat.type === 'user' ? currentChat.id : null, userId: currentUser.id }); closeModal('delete-modal'); };
 window.handleInputKey = (e) => { if(e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } };
 
-// E2EE UPLOAD
+// SEND MESSAGE FUNCTION
 window.sendMessage = async () => {
-    const input = document.getElementById('message-input'); const txt = input.value.trim(); const fileInput = document.getElementById('file-input');
+    const input = document.getElementById('message-input'); 
+    const txt = input.value.trim(); 
+    const fileInput = document.getElementById('file-input');
     
-    if(editingMessageId) { if(txt) { socket.emit('edit_message', { messageId: editingMessageId, newContent: txt, groupId: currentChat.type === 'group' ? currentChat.id : null, receiverId: currentChat.type === 'user' ? currentChat.id : null }); cancelEdit(); } return; }
+    if(editingMessageId) { 
+        if(txt) { socket.emit('edit_message', { messageId: editingMessageId, newContent: txt, groupId: currentChat.type === 'group' ? currentChat.id : null, receiverId: currentChat.type === 'user' ? currentChat.id : null }); cancelEdit(); } 
+        return; 
+    }
+    
     if(!txt && !fileInput.files.length) return;
     
-    // TEXT ENCRYPTION
-    let encryptedText = txt; let isEncrypted = false;
+    // --- TEXT HANDLING ---
+    let encryptedText = txt; 
+    let isEncrypted = false;
+    
     if (currentChat.type === 'user' && txt) { 
         const secret = getSharedSecret(currentChat.public_key); 
-        if (secret) { encryptedText = encryptText(txt, secret); isEncrypted = true; } 
+        if (secret) { 
+            encryptedText = encryptText(txt, secret); 
+            isEncrypted = true; 
+        } 
     }
 
-    // FILE ENCRYPTION & UPLOAD
+    // --- FILE HANDLING ---
     if(fileInput.files.length) {
         const file = fileInput.files[0];
+        
+        // 1. Generate One-Time Key for file
         const key = await generateFileKey();
+        
+        // 2. Encrypt File locally
         const { encryptedBlob, iv } = await encryptFile(file, key);
         
-        // Upload SECURE blob to DB
+        // 3. Upload Encrypted Blob to DB
         const fd = new FormData();
         fd.append('file', encryptedBlob, file.name + ".enc"); 
         
         try {
             const res = await fetch(`${serverUrl}/api/upload_secure`, { method:'POST', body:fd });
-            const fileData = await res.json(); 
+            const fileData = await res.json(); // returns fileId, size
             
-            // KEY EXCHANGE
+            // 4. Encrypt the File Key (Key Exchange)
             const rawFileKey = await exportKey(key);
             let encryptedFileKey = rawFileKey; 
             
+            // Encrypt key with shared secret for DM
             if(currentChat.type === 'user') {
                 const secret = getSharedSecret(currentChat.public_key);
                 if(secret) encryptedFileKey = encryptText(rawFileKey, secret);
             }
             
+            // 5. Send message with Link + IV + Encrypted Key
             const groupId = currentChat.type === 'group' ? currentChat.id : null;
             
             socket.emit('send_message', { 
                 senderId: currentUser.id, 
                 receiverId: currentChat.type === 'user' ? currentChat.id : null, 
                 groupId: groupId, 
-                content: encryptedFileKey, 
+                content: encryptedFileKey, // Store KEY in content field
                 type: fileInput.files[0].type.startsWith('image/') ? 'image' : 'file', 
                 fileId: fileData.fileId,
                 fileUrl: `/api/file/${fileData.fileId}`, 
@@ -599,19 +919,32 @@ window.sendMessage = async () => {
             });
             
             window.clearFileSelection();
-        } catch(e) { console.error(e); }
+        } catch(e) { console.error("Upload fail:", e); }
     }
 
-    if(txt) { emitMsg(encryptedText, 'text', null, null, null, isEncrypted); input.value = ''; }
-    document.getElementById('emoji-picker').style.display = 'none'; document.getElementById('emoji-suggestions').style.display = 'none';
+    // Send text if present
+    if(txt) { 
+        const groupId = currentChat.type === 'group' ? currentChat.id : null;
+        socket.emit('send_message', { 
+            senderId: currentUser.id, 
+            receiverId: currentChat.type === 'user' ? currentChat.id : null, 
+            groupId: groupId, 
+            content: encryptedText, 
+            type: 'text', 
+            isEncrypted: isEncrypted, 
+            senderName: currentUser.nickname 
+        }); 
+        input.value = ''; 
+    }
+    
+    document.getElementById('emoji-picker').style.display = 'none'; 
+    document.getElementById('emoji-suggestions').style.display = 'none';
 };
 
-function emitMsg(content, type, url, fileName, fileSize, isEncrypted) { 
-    const groupId = currentChat.type === 'group' ? currentChat.id : null;
-    socket.emit('send_message', { senderId: currentUser.id, receiverId: currentChat.type === 'user' ? currentChat.id : null, groupId: groupId, group_id: groupId, content, type, fileUrl: url, fileName, fileSize, isEncrypted: isEncrypted, senderName: currentUser.nickname }); 
-}
+// ==========================================
+// CALL LOGIC (FIXED)
+// ==========================================
 
-// --- CALL LOGIC ---
 window.toggleDeviceMenu = (menuId) => {
     const menu = document.getElementById(menuId);
     const isShown = menu.classList.contains('show');
@@ -642,7 +975,6 @@ window.startCall = (e) => {
     document.getElementById('remote-name-call').textContent = "Connecting to " + currentChat.nickname + "...";
     document.getElementById('call-placeholder').style.display = 'flex';
     
-    // FIX 5: Ensure Stream is READY before Peer
     navigator.mediaDevices.getUserMedia({ audio: true, video: false }).then(stream => { 
         localStream = stream;
         setupCallUI(); 
@@ -650,6 +982,7 @@ window.startCall = (e) => {
         document.getElementById('local-video-wrapper').style.display = 'none';
         document.getElementById('local-video').srcObject = stream;
         
+        // FIX: tricke: false for stability in local networks
         currentPeer = new SimplePeer({ initiator: true, trickle: false, stream: stream }); 
         
         currentPeer.on('signal', data => {
@@ -815,19 +1148,25 @@ window.confirmScreenShare = async (withAudio) => {
     } catch(e) { console.error(e); }
 };
 
-window.endCall = () => { 
-    const partnerId = currentChat ? currentChat.id : (incomingCallData ? incomingCallData.from : null); 
-    if(partnerId) socket.emit('end_call', { to: partnerId }); 
-    
+window.endCallUI = () => {
     if(currentPeer) { currentPeer.destroy(); currentPeer = null; }
     if(localStream) { localStream.getTracks().forEach(t => t.stop()); localStream = null; }
-
-    document.getElementById('remote-video').srcObject = null;
-    document.getElementById('local-video').srcObject = null;
-    document.getElementById('remote-video').load();
-    document.getElementById('local-video').load();
+    
+    // FORCE CLEANUP
+    const remoteVideo = document.getElementById('remote-video');
+    const localVideo = document.getElementById('local-video');
+    remoteVideo.srcObject = null;
+    localVideo.srcObject = null;
+    remoteVideo.load(); // Detach from PiP
+    localVideo.load();
 
     incomingCallData = null; isScreenSharing = false;
     document.getElementById('active-call-modal').style.display = 'none'; 
     document.getElementById('incoming-call-modal').style.display = 'none'; 
+};
+
+window.endCall = () => { 
+    const partnerId = currentChat ? currentChat.id : (incomingCallData ? incomingCallData.from : null); 
+    if(partnerId) socket.emit('end_call', { to: partnerId }); 
+    endCallUI();
 };

@@ -24,9 +24,7 @@
         <div class="auth-container">
             <h1>CorpMes</h1>
             <p style="color:#aaa; font-size:14px; margin-bottom:20px;">Защищенный вход</p>
-            
             <input type="text" id="server-url" placeholder="Адрес сервера (https://...)">
-            
             <div class="key-file-area">
                 <i class="fas fa-key" style="font-size: 40px; color: var(--primary); margin-bottom: 15px;"></i>
                 <p>Для входа требуется файл-ключ</p>
@@ -34,7 +32,6 @@
                 <button onclick="document.getElementById('auth-key-file').click()" class="primary-btn" style="margin-top:5px;">Выбрать файл</button>
                 <p id="key-file-name" style="margin-top:10px; font-weight:bold; color:#fff; word-break: break-all;"></p>
             </div>
-
             <button id="btn-login" onclick="loginWithKey()" class="primary-btn" style="display:none; background: #4caf50;">Войти в систему</button>
         </div>
     </div>
@@ -136,7 +133,6 @@
             </div>
             
             <div class="call-controls-bar">
-                
                 <div class="control-group">
                     <div class="device-select-trigger" onclick="toggleDeviceMenu('video-menu')"><i class="fas fa-chevron-up"></i></div>
                     <div id="video-menu" class="device-menu"></div>
@@ -150,7 +146,6 @@
                 </div>
 
                 <button onclick="startScreenShare()" id="btn-share" class="control-btn"><i class="fas fa-desktop"></i></button>
-
                 <button onclick="endCall()" class="control-btn hangup"><i class="fas fa-phone-slash"></i></button>
             </div>
         </div>
