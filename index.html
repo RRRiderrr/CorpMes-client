@@ -6,6 +6,7 @@
     <title>CorpMes</title>
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
     <link rel="stylesheet" href="style.css">
+    
     <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/elliptic/6.5.4/elliptic.min.js"></script>
 </head>
@@ -15,7 +16,9 @@
         <div class="auth-container">
             <h1>CorpMes</h1>
             <p style="color:#aaa; font-size:14px; margin-bottom:20px;">Защищенный вход</p>
+            
             <input type="text" id="server-url" placeholder="Адрес сервера (https://...)">
+            
             <div class="key-file-area">
                 <i class="fas fa-key" style="font-size: 40px; color: var(--primary); margin-bottom: 15px;"></i>
                 <p>Для входа требуется файл-ключ</p>
@@ -23,6 +26,7 @@
                 <button onclick="document.getElementById('auth-key-file').click()" class="primary-btn" style="margin-top:5px;">Выбрать файл</button>
                 <p id="key-file-name" style="margin-top:10px; font-weight:bold; color:#fff; word-break: break-all;"></p>
             </div>
+
             <button id="btn-login" onclick="loginWithKey()" class="primary-btn" style="display:none; background: #4caf50;">Войти в систему</button>
         </div>
     </div>
@@ -39,6 +43,7 @@
                     <small id="my-username-small" onclick="copyUsername()" title="Нажмите, чтобы скопировать ID">@login</small>
                 </div>
             </div>
+            
             <div class="search-box">
                 <input type="text" id="search-input" placeholder="Поиск (Enter)..." onkeydown="handleSearchKey(event)">
                 <button class="create-group-btn" onclick="openCreateGroupModal()" title="Создать группу">
@@ -80,6 +85,7 @@
                     <div id="edit-mode-bar" class="edit-mode-bar" style="display:none;">
                         <i class="fas fa-pen"></i><span>Редактирование</span><button onclick="cancelEdit()"><i class="fas fa-times"></i></button>
                     </div>
+
                     <div class="input-area">
                         <div id="emoji-picker" class="emoji-picker" style="display:none;">
                             <div class="emoji-search"><input type="text" placeholder="Поиск..." oninput="filterEmojis(this.value)"></div>
@@ -118,6 +124,7 @@
             </div>
             
             <div class="call-controls-bar">
+                
                 <div class="control-group">
                     <div class="device-select-trigger" onclick="toggleDeviceMenu('video-menu')"><i class="fas fa-chevron-up"></i></div>
                     <div id="video-menu" class="device-menu"></div>
@@ -131,6 +138,7 @@
                 </div>
 
                 <button onclick="startScreenShare()" id="btn-share" class="control-btn"><i class="fas fa-desktop"></i></button>
+
                 <button onclick="endCall()" class="control-btn hangup"><i class="fas fa-phone-slash"></i></button>
             </div>
         </div>

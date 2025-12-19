@@ -208,10 +208,18 @@ function connectToServer() {
         });
         scrollToBottom(); 
     });
+
     socket.on('call_incoming', (data) => { if(currentPeer || incomingCallData) { socket.emit('call_busy'); return; } incomingCallData = data; document.getElementById('incoming-call-modal').style.display = 'flex'; document.getElementById('caller-name').textContent = data.name; });
-    socket.on('call_accepted', (signal) => { if(currentPeer) currentPeer.signal(signal); });
-    socket.on('call_busy', () => { alert("Абонент занят"); endCallUI(); });
-    socket.on('call_ended', () => { endCallUI(); });
+    
+    // FIX: WebRTC Negotiate Error
+    socket.on('call_accepted', (signal) => { 
+        if(currentPeer && !currentPeer.destroyed) {
+            currentPeer.signal(signal); 
+        }
+    });
+    
+    socket.on('call_busy', () => { alert("Абонент занят"); endCall(); });
+    socket.on('call_ended', () => { endCall(); });
 
     socket.on('contacts_list', (users) => {
         const list = document.getElementById('group-candidates-list');
@@ -514,26 +522,50 @@ window.toggleDeviceMenu = (menuId) => {
 window.startCall = (e) => { 
     if(e) e.stopPropagation(); 
     if(currentChat.type === 'group') return alert("Звонки только тет-а-тет"); 
-    setupCallUI(); 
+    
+    // FIX: Wait for stream
     navigator.mediaDevices.getUserMedia({ audio: true, video: false }).then(stream => { 
         localStream = stream;
+        setupCallUI(); // Show UI only after stream
         document.getElementById('local-video').srcObject = stream;
-        currentPeer = new SimplePeer({ initiator: true, trickle: false, stream }); 
-        currentPeer.on('signal', data => socket.emit('call_user', { userToCall: currentChat.id, signalData: data, from: currentUser.id, name: currentUser.nickname })); 
-        currentPeer.on('stream', rs => { document.getElementById('remote-video').srcObject = rs; }); 
+        
+        currentPeer = new SimplePeer({ initiator: true, trickle: false, stream: stream }); // FIX: Pass stream
+        
+        currentPeer.on('signal', data => {
+             socket.emit('call_user', { userToCall: currentChat.id, signalData: data, from: currentUser.id, name: currentUser.nickname });
+        });
+        
+        currentPeer.on('stream', rs => { 
+             const v = document.getElementById('remote-video');
+             v.srcObject = rs; 
+        }); 
+        
+        currentPeer.on('error', err => console.error("Peer Error:", err));
+
     }).catch(e => alert("Нет доступа: " + e)); 
 };
 
 window.acceptCall = () => { 
     document.getElementById('incoming-call-modal').style.display = 'none'; 
-    setupCallUI();
+    
     navigator.mediaDevices.getUserMedia({ audio: true, video: false }).then(stream => { 
         localStream = stream;
+        setupCallUI();
         document.getElementById('local-video').srcObject = stream;
-        currentPeer = new SimplePeer({ initiator: false, trickle: false, stream }); 
-        currentPeer.on('signal', data => socket.emit('answer_call', { signal: data, to: incomingCallData.from })); 
-        currentPeer.on('stream', rs => { document.getElementById('remote-video').srcObject = rs; }); 
+        
+        currentPeer = new SimplePeer({ initiator: false, trickle: false, stream: stream }); // FIX: Pass stream
+        
+        currentPeer.on('signal', data => {
+             socket.emit('answer_call', { signal: data, to: incomingCallData.from }); 
+        });
+        
+        currentPeer.on('stream', rs => { 
+             const v = document.getElementById('remote-video');
+             v.srcObject = rs; 
+        }); 
+        
         currentPeer.signal(incomingCallData.signal); 
+        
     }).catch(e => alert("Ошибка: " + e)); 
 };
 
@@ -646,21 +678,16 @@ window.confirmScreenShare = async (withAudio) => {
 window.endCall = () => { 
     const partnerId = currentChat ? currentChat.id : (incomingCallData ? incomingCallData.from : null); 
     if(partnerId) socket.emit('end_call', { to: partnerId }); 
-    if(currentPeer) currentPeer.destroy(); 
-    if(localStream) localStream.getTracks().forEach(t => t.stop()); 
     
     // FIX PIP: Clear sources
-    // Force reload video element to detach PiP
-    const remoteVideo = document.getElementById('remote-video');
-    const localVideo = document.getElementById('local-video');
-    
-    remoteVideo.srcObject = null;
-    localVideo.srcObject = null;
-    
-    remoteVideo.load();
-    localVideo.load();
+    document.getElementById('remote-video').srcObject = null;
+    document.getElementById('local-video').srcObject = null;
 
-    currentPeer = null; localStream = null; incomingCallData = null; isScreenSharing = false;
+    // Destroy streams
+    if(currentPeer) { currentPeer.destroy(); currentPeer = null; }
+    if(localStream) { localStream.getTracks().forEach(t => t.stop()); localStream = null; }
+
+    incomingCallData = null; isScreenSharing = false;
     document.getElementById('active-call-modal').style.display = 'none'; 
     document.getElementById('incoming-call-modal').style.display = 'none'; 
 };
