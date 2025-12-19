@@ -48,12 +48,19 @@ input { width: 100%; padding: 12px; background: #2c2c2c; border: 1px solid #444;
 .msg-row { display: flex; gap: 10px; max-width: 70%; margin-bottom: 8px; align-items: flex-end; }
 .msg-row.sent { align-self: flex-end; flex-direction: row-reverse; }
 .msg-row.received { align-self: flex-start; }
+
 .msg-row.consecutive { margin-top: -6px; } 
 .msg-row.consecutive .msg-avatar { visibility: hidden; height: 0; } 
 .msg-row.consecutive.sent .message { border-top-right-radius: 2px; }
 .msg-row.consecutive.received .message { border-top-left-radius: 2px; }
+
 .msg-avatar { width: 35px; height: 35px; border-radius: 50%; object-fit: cover; cursor: pointer; flex-shrink: 0; margin-bottom: 2px; }
-.message { padding: 8px 12px; border-radius: 12px; font-size: 14px; word-wrap: break-word; position: relative; width: fit-content; min-width: 0; }
+
+.message { 
+    padding: 8px 12px; border-radius: 12px; font-size: 14px; 
+    word-wrap: break-word; position: relative; 
+    width: fit-content; min-width: 0; 
+}
 .msg-row.sent .message { background: var(--msg-out); border-bottom-right-radius: 2px; }
 .msg-row.received .message { background: var(--msg-in); border-bottom-left-radius: 2px; }
 .msg-name { font-size: 11px; color: #ddd; opacity: 0.7; display: block; margin-bottom: 2px; font-weight: bold; }
