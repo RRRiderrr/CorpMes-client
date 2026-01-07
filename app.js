@@ -14,6 +14,13 @@ let incomingCallData = null;
 let currentAudioDevice = null;
 let currentVideoDevice = null;
 let isScreenSharing = false;
+// ICE-сервера для WebRTC. STUN помогает пробиться через NAT в разных сетях.
+// TURN здесь не задан (это платный/свой сервер), но можно добавить при необходимости.
+const ICE_SERVERS = [
+    { urls: 'stun:stun.l.google.com:19302' },
+    { urls: 'stun:global.stun.twilio.com:3478?transport=udp' }
+];
+
 
 // Редактирование / UI
 let editingMessageId = null;
@@ -457,7 +464,7 @@ function connectToServer() {
 
     // ЗВОНКИ
     socket.on('call_incoming', (data) => { 
-        if(currentPeer || incomingCallData) { socket.emit('call_busy'); return; } 
+        if(currentPeer || incomingCallData) { socket.emit('call_busy', { to: data.from }); return; } 
         incomingCallData = data; 
         document.getElementById('incoming-call-modal').style.display = 'flex'; 
         document.getElementById('caller-name').textContent = data.name; 
@@ -983,10 +990,10 @@ window.startCall = (e) => {
         document.getElementById('local-video').srcObject = stream;
         
         // FIX: tricke: false for stability in local networks
-        currentPeer = new SimplePeer({ initiator: true, trickle: false, stream: stream }); 
+        currentPeer = new SimplePeer({ initiator: true, trickle: false, stream: stream, config: { iceServers: ICE_SERVERS } }); 
         
         currentPeer.on('signal', data => {
-             socket.emit('call_user', { userToCall: currentChat.id, signalData: data, from: currentUser.id, name: currentUser.nickname });
+             socket.emit('call_user', { userToCall: currentChat.id, signal: data, from: currentUser.id, name: currentUser.nickname });
         });
         
         currentPeer.on('stream', rs => { 
@@ -1012,7 +1019,7 @@ window.acceptCall = () => {
         document.getElementById('local-video-wrapper').style.display = 'none';
         document.getElementById('local-video').srcObject = stream;
         
-        currentPeer = new SimplePeer({ initiator: false, trickle: false, stream: stream });
+        currentPeer = new SimplePeer({ initiator: false, trickle: false, stream: stream, config: { iceServers: ICE_SERVERS } });
         
         currentPeer.on('signal', data => {
              socket.emit('answer_call', { signal: data, to: incomingCallData.from }); 
@@ -1028,7 +1035,9 @@ window.acceptCall = () => {
              document.getElementById('call-placeholder').style.display = 'none';
         });
         
-        currentPeer.signal(incomingCallData.signal); 
+        const offerSignal = (incomingCallData && (incomingCallData.signal || incomingCallData.signalData)) || null;
+        if(!offerSignal) { alert('Ошибка звонка: не пришёл offer-сигнал'); endCallUI(); return; }
+        currentPeer.signal(offerSignal); 
         
     }).catch(e => alert("Ошибка: " + e)); 
 };
