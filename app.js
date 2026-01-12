@@ -10,7 +10,7 @@ let sidebarChats = [];
 // WebRTC / Звонки
 let localStream = null;
 let currentPeer = null;
-let incomingCallData = null; incomingSignalQueue = [];
+let incomingCallData = null;
 let incomingSignalQueue = [];
 let currentAudioDevice = null;
 let currentVideoDevice = null;
