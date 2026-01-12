@@ -540,7 +540,7 @@ function connectToServer() {
     });
 }
 
-function renderSidebar(list = null) {
+function renderSidebar(list = null, isSearch = false) {
     const container = document.getElementById('chats-list');
     container.innerHTML = '';
     const data = list || sidebarChats;
@@ -552,7 +552,7 @@ function renderSidebar(list = null) {
         const avatar = item.avatar ? serverUrl + item.avatar : 'https://placehold.co/50';
         let deletedBadge = item.is_deleted ? '<div class="deleted-overlay"><i class="fas fa-skull"></i></div>' : '';
         el.innerHTML = `<div style="position:relative"><img src="${avatar}">${deletedBadge}</div><div><div style="font-weight:bold">${item.nickname || item.name}</div><div style="font-size:12px; color:#aaa">${item.type === 'group' ? 'Группа' : ''}</div></div>`;
-        el.onclick = () => openChat(item, isSearch ? 'user' : item.type);
+        el.onclick = () => openChat(item, isSearch ? 'user' : (item.type || 'user'));
         container.appendChild(el);
     });
     // Аргумент isSearch, который был в прошлых версиях, здесь опущен, но логика сохранена через замыкание/контекст
