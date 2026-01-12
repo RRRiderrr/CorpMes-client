@@ -10,7 +10,8 @@ let sidebarChats = [];
 // WebRTC / Звонки
 let localStream = null;
 let currentPeer = null;
-let incomingCallData = null;
+let incomingCallData = null; incomingSignalQueue = [];
+let incomingSignalQueue = [];
 let currentAudioDevice = null;
 let currentVideoDevice = null;
 let isScreenSharing = false;
@@ -456,14 +457,35 @@ function connectToServer() {
     });
 
     // ЗВОНКИ
-    socket.on('call_incoming', (data) => { 
-        if(currentPeer || incomingCallData) { socket.emit('call_busy', { to: data.from }); return; } 
-        incomingCallData = data; 
-        document.getElementById('incoming-call-modal').style.display = 'flex'; 
-        document.getElementById('caller-name').textContent = data.name; 
+    socket.on('call_incoming', (data) => {
+        const sig = data && (data.signal || data.signalData);
+        // Если уже в активном звонке — это, скорее всего, trickle ICE от второй стороны
+        if (currentPeer && !currentPeer.destroyed && sig) {
+            try { currentPeer.signal(sig); } catch (e) { console.warn(e); }
+            return;
+        }
+
+        // Если уже есть входящий звонок, но ещё не приняли — копим сигналы
+        if (incomingCallData && sig) {
+            incomingSignalQueue.push(sig);
+            return;
+        }
+
+        // Если заняты — сообщаем звонящему
+        if (currentPeer || incomingCallData) {
+            if (data && data.from) socket.emit('call_busy', { to: data.from });
+            return;
+        }
+
+        incomingCallData = data;
+        incomingSignalQueue = [];
+        if (sig) incomingSignalQueue.push(sig);
+
+        document.getElementById('incoming-call-modal').style.display = 'flex';
+        document.getElementById('caller-name').textContent = data.name || 'Входящий звонок';
     });
-    
-    socket.on('call_accepted', (signal) => { 
+
+socket.on('call_accepted', (signal) => { 
         if(currentPeer && !currentPeer.destroyed) {
             try { currentPeer.signal(signal); } catch(e) { console.warn(e); }
         }
@@ -967,71 +989,147 @@ window.toggleDeviceMenu = (menuId) => {
     }
 };
 
-window.startCall = (e) => { 
-    if(e) e.stopPropagation(); 
-    if(currentChat.type === 'group') return alert("Звонки только тет-а-тет"); 
-    
+function attachAndPlayVideo(el, stream, forceMute = false) {
+    if (!el) return;
+    el.srcObject = stream;
+    el.playsInline = true;
+    el.autoplay = true;
+    if (forceMute) el.muted = true;
+
+    const p = el.play();
+    if (p && typeof p.catch === 'function') {
+        p.catch(() => console.warn('Video play() blocked by autoplay policy'));
+    }
+}
+
+window.startCall = async (e) => {
+    if (e) e.stopPropagation();
+    if (!currentChat || currentChat.type === 'group') return alert("Звонки только тет-а-тет");
+    if (!socket) return alert("Нет соединения с сервером");
+
     document.getElementById('remote-avatar-call').src = currentChat.avatar ? serverUrl + currentChat.avatar : 'https://placehold.co/150';
-    document.getElementById('remote-name-call').textContent = "Connecting to " + currentChat.nickname + "...";
+    document.getElementById('remote-name-call').textContent = "Connecting to " + (currentChat.nickname || 'user') + "...";
     document.getElementById('call-placeholder').style.display = 'flex';
-    
-    navigator.mediaDevices.getUserMedia({ audio: true, video: false }).then(stream => { 
-        localStream = stream;
-        setupCallUI(); 
-        
-        document.getElementById('local-video-wrapper').style.display = 'none';
-        document.getElementById('local-video').srcObject = stream;
-        
-        // FIX: tricke: false for stability in local networks
-        currentPeer = new SimplePeer({ initiator: true, trickle: false, stream: stream, config: { iceServers: [ { urls: 'stun:stun.l.google.com:19302' }, { urls: 'stun:stun1.l.google.com:19302' }, { urls: 'stun:global.stun.twilio.com:3478' } ] } }); 
-        
-        currentPeer.on('signal', data => {
-             socket.emit('call_user', { userToCall: currentChat.id, signal: data, signalData: data, from: currentUser.id, name: currentUser.nickname });
-        });
-        
-        currentPeer.on('stream', rs => { 
-             const v = document.getElementById('remote-video');
-             v.srcObject = rs;
-             rs.onactive = () => document.getElementById('call-placeholder').style.display = 'none';
-        }); 
-        
-        currentPeer.on('connect', () => {
-             document.getElementById('call-placeholder').style.display = 'none';
+    document.getElementById('active-call-modal').style.display = 'flex';
+
+    try {
+        localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+
+        const localVideo = document.getElementById('local-video');
+        const localWrapper = document.getElementById('local-video-wrapper');
+        if (localWrapper) localWrapper.style.display = 'none';
+        attachAndPlayVideo(localVideo, localStream, true);
+
+        currentPeer = new SimplePeer({
+            initiator: true,
+            trickle: true,
+            stream: localStream,
+            config: {
+                iceServers: [
+                    { urls: 'stun:stun.l.google.com:19302' },
+                    { urls: 'stun:stun1.l.google.com:19302' },
+                    { urls: 'stun:global.stun.twilio.com:3478' }
+                ]
+            }
         });
 
-    }).catch(e => alert("Нет доступа: " + e)); 
+        currentPeer.on('signal', (signal) => {
+            socket.emit('call_user', {
+                userToCall: currentChat.id,
+                from: currentUser.id,
+                name: currentUser.nickname,
+                signal
+            });
+        });
+
+        currentPeer.on('stream', (remoteStream) => {
+            const remoteVideo = document.getElementById('remote-video');
+            attachAndPlayVideo(remoteVideo, remoteStream, false);
+            document.getElementById('call-placeholder').style.display = 'none';
+        });
+
+        currentPeer.on('connect', () => {
+            console.log('[CALL] peer connect (caller)');
+            document.getElementById('call-placeholder').style.display = 'none';
+        });
+
+        currentPeer.on('error', (err) => console.error('[CALL] peer error (caller)', err));
+        currentPeer.on('close', () => console.log('[CALL] peer close (caller)'));
+
+    } catch (err) {
+        console.error(err);
+        alert('Нет доступа к микрофону/аудио: ' + err);
+        endCall();
+    }
 };
 
-window.acceptCall = () => { 
-    document.getElementById('incoming-call-modal').style.display = 'none'; 
+
+window.acceptCall = async () => {
+    document.getElementById('incoming-call-modal').style.display = 'none';
+    document.getElementById('active-call-modal').style.display = 'flex';
     document.getElementById('call-placeholder').style.display = 'flex';
 
-    navigator.mediaDevices.getUserMedia({ audio: true, video: false }).then(stream => { 
-        localStream = stream;
-        setupCallUI();
-        document.getElementById('local-video-wrapper').style.display = 'none';
-        document.getElementById('local-video').srcObject = stream;
-        
-        currentPeer = new SimplePeer({ initiator: false, trickle: false, stream: stream, config: { iceServers: [ { urls: 'stun:stun.l.google.com:19302' }, { urls: 'stun:stun1.l.google.com:19302' }, { urls: 'stun:global.stun.twilio.com:3478' } ] } });
-        
-        currentPeer.on('signal', data => {
-             socket.emit('answer_call', { signal: data, to: incomingCallData.from }); 
+    if (!incomingCallData) return;
+
+    try {
+        localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+
+        const localVideo = document.getElementById('local-video');
+        const localWrapper = document.getElementById('local-video-wrapper');
+        if (localWrapper) localWrapper.style.display = 'none';
+        attachAndPlayVideo(localVideo, localStream, true);
+
+        currentPeer = new SimplePeer({
+            initiator: false,
+            trickle: true,
+            stream: localStream,
+            config: {
+                iceServers: [
+                    { urls: 'stun:stun.l.google.com:19302' },
+                    { urls: 'stun:stun1.l.google.com:19302' },
+                    { urls: 'stun:global.stun.twilio.com:3478' }
+                ]
+            }
         });
-        
-        currentPeer.on('stream', rs => { 
-             const v = document.getElementById('remote-video');
-             v.srcObject = rs; 
-             document.getElementById('call-placeholder').style.display = 'none';
-        }); 
-        
+
+        currentPeer.on('signal', (signal) => {
+            socket.emit('answer_call', {
+                to: incomingCallData.from,
+                signal
+            });
+        });
+
+        currentPeer.on('stream', (remoteStream) => {
+            const remoteVideo = document.getElementById('remote-video');
+            attachAndPlayVideo(remoteVideo, remoteStream, false);
+            document.getElementById('call-placeholder').style.display = 'none';
+        });
+
         currentPeer.on('connect', () => {
-             document.getElementById('call-placeholder').style.display = 'none';
+            console.log('[CALL] peer connect (callee)');
+            document.getElementById('call-placeholder').style.display = 'none';
         });
-        
-        currentPeer.signal(incomingCallData.signal || incomingCallData.signalData); 
-        
-    }).catch(e => alert("Ошибка: " + e)); 
+
+        currentPeer.on('error', (err) => console.error('[CALL] peer error (callee)', err));
+        currentPeer.on('close', () => console.log('[CALL] peer close (callee)'));
+
+        // Прокидываем все сигналы, которые успели прийти до нажатия "Принять"
+        const signals = Array.isArray(incomingSignalQueue) ? incomingSignalQueue.slice() : [];
+        const first = incomingCallData.signal || incomingCallData.signalData;
+        if (first) signals.unshift(first);
+
+        for (const s of signals) {
+            if (!s) continue;
+            try { currentPeer.signal(s); } catch (e) { console.warn(e); }
+        }
+
+    } catch (err) {
+        console.error(err);
+        alert('Ошибка доступа к микрофону/аудио: ' + err);
+        endCall();
+    }
 };
+
 
 window.declineCall = () => { 
     document.getElementById('incoming-call-modal').style.display = 'none'; 
@@ -1160,7 +1258,7 @@ window.endCallUI = () => {
     remoteVideo.load(); // Detach from PiP
     localVideo.load();
 
-    incomingCallData = null; isScreenSharing = false;
+    incomingCallData = null; incomingSignalQueue = []; isScreenSharing = false;
     document.getElementById('active-call-modal').style.display = 'none'; 
     document.getElementById('incoming-call-modal').style.display = 'none'; 
 };
