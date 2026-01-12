@@ -14,13 +14,6 @@ let incomingCallData = null;
 let currentAudioDevice = null;
 let currentVideoDevice = null;
 let isScreenSharing = false;
-// ICE-сервера для WebRTC. STUN помогает пробиться через NAT в разных сетях.
-// TURN здесь не задан (это платный/свой сервер), но можно добавить при необходимости.
-const ICE_SERVERS = [
-    { urls: 'stun:stun.l.google.com:19302' },
-    { urls: 'stun:global.stun.twilio.com:3478?transport=udp' }
-];
-
 
 // Редактирование / UI
 let editingMessageId = null;
@@ -990,7 +983,7 @@ window.startCall = (e) => {
         document.getElementById('local-video').srcObject = stream;
         
         // FIX: tricke: false for stability in local networks
-        currentPeer = new SimplePeer({ initiator: true, trickle: false, stream: stream, config: { iceServers: ICE_SERVERS } }); 
+        currentPeer = new SimplePeer({ initiator: true, trickle: false, stream: stream, config: { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }, { urls: 'stun:global.stun.twilio.com:3478?transport=udp' }] } }); 
         
         currentPeer.on('signal', data => {
              socket.emit('call_user', { userToCall: currentChat.id, signal: data, from: currentUser.id, name: currentUser.nickname });
@@ -1019,7 +1012,7 @@ window.acceptCall = () => {
         document.getElementById('local-video-wrapper').style.display = 'none';
         document.getElementById('local-video').srcObject = stream;
         
-        currentPeer = new SimplePeer({ initiator: false, trickle: false, stream: stream, config: { iceServers: ICE_SERVERS } });
+        currentPeer = new SimplePeer({ initiator: false, trickle: false, stream: stream, config: { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }, { urls: 'stun:global.stun.twilio.com:3478?transport=udp' }] } });
         
         currentPeer.on('signal', data => {
              socket.emit('answer_call', { signal: data, to: incomingCallData.from }); 
