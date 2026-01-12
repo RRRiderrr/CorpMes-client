@@ -552,7 +552,7 @@ function renderSidebar(list = null, isSearch = false) {
         const avatar = item.avatar ? serverUrl + item.avatar : 'https://placehold.co/50';
         let deletedBadge = item.is_deleted ? '<div class="deleted-overlay"><i class="fas fa-skull"></i></div>' : '';
         el.innerHTML = `<div style="position:relative"><img src="${avatar}">${deletedBadge}</div><div><div style="font-weight:bold">${item.nickname || item.name}</div><div style="font-size:12px; color:#aaa">${item.type === 'group' ? 'Группа' : ''}</div></div>`;
-        el.onclick = () => openChat(item, isSearch ? 'user' : item.type);
+        el.onclick = () => openChat(item, isSearch ? 'user' : (item.type || 'user'));
         container.appendChild(el);
     });
     // Аргумент isSearch, который был в прошлых версиях, здесь опущен, но логика сохранена через замыкание/контекст
@@ -983,7 +983,15 @@ window.startCall = (e) => {
         document.getElementById('local-video').srcObject = stream;
         
         // FIX: tricke: false for stability in local networks
-        currentPeer = new SimplePeer({ initiator: true, trickle: false, stream: stream, config: { iceServers: [ { urls: 'stun:stun.l.google.com:19302' }, { urls: 'stun:global.stun.twilio.com:3478?transport=udp' } ] } }); 
+        currentPeer = new SimplePeer({
+            initiator: true,
+            trickle: false,
+            stream: stream,
+            config: { iceServers: [
+                { urls: 'stun:stun.l.google.com:19302' },
+                { urls: 'stun:global.stun.twilio.com:3478' }
+            ] }
+        }); 
         
         currentPeer.on('signal', data => {
              socket.emit('call_user', { userToCall: currentChat.id, signal: data, from: currentUser.id, name: currentUser.nickname });
@@ -1012,7 +1020,15 @@ window.acceptCall = () => {
         document.getElementById('local-video-wrapper').style.display = 'none';
         document.getElementById('local-video').srcObject = stream;
         
-        currentPeer = new SimplePeer({ initiator: false, trickle: false, stream: stream, config: { iceServers: [ { urls: 'stun:stun.l.google.com:19302' }, { urls: 'stun:global.stun.twilio.com:3478?transport=udp' } ] } });
+        currentPeer = new SimplePeer({
+            initiator: false,
+            trickle: false,
+            stream: stream,
+            config: { iceServers: [
+                { urls: 'stun:stun.l.google.com:19302' },
+                { urls: 'stun:global.stun.twilio.com:3478' }
+            ] }
+        });
         
         currentPeer.on('signal', data => {
              socket.emit('answer_call', { signal: data, to: incomingCallData.from }); 
@@ -1028,9 +1044,7 @@ window.acceptCall = () => {
              document.getElementById('call-placeholder').style.display = 'none';
         });
         
-        const offer = (incomingCallData && (incomingCallData.signal || incomingCallData.signalData));
-        if(!offer){ alert('Ошибка звонка: не пришёл offer-сигнал'); return; }
-        currentPeer.signal(offer); 
+        currentPeer.signal(incomingCallData.signal || incomingCallData.signalData); 
         
     }).catch(e => alert("Ошибка: " + e)); 
 };
