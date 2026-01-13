@@ -1016,8 +1016,7 @@ function attachAndPlayVideo(el, stream, forceMute = false) {
     }
 }
 
-async 
-function primeCallAudio() {
+async function primeCallAudio() {
     // Максимально ранний "unlock" аудио в момент клика (важно для Chrome/Edge + инкогнито)
     try {
         if (!remoteAudioEl) {
