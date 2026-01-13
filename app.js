@@ -1016,42 +1016,57 @@ function attachAndPlayVideo(el, stream, forceMute = false) {
     }
 }
 
-async function ensureCallAudioUnlocked() {
-    // IMPORTANT: autoplay policies can block audio if "play()" is not triggered by a user gesture.
-    // We "prime" a hidden <audio> element *during the click* (start/accept) so later srcObject assignment can play.
+function ensureCallAudioUnlocked() {
     try {
-        if (!remoteAudioEl) {
-            remoteAudioEl = document.createElement('audio');
-            remoteAudioEl.id = 'remote-audio';
-            remoteAudioEl.autoplay = true;
-            remoteAudioEl.playsInline = true;
-            remoteAudioEl.controls = false;
-            remoteAudioEl.style.display = 'none';
-            remoteAudioEl.muted = true;      // prime muted
-            remoteAudioEl.volume = 1;
-            document.body.appendChild(remoteAudioEl);
-        }
-
-        // Prime element playback inside the user gesture
-        try {
-            if (!remoteAudioEl.srcObject) remoteAudioEl.srcObject = new MediaStream();
-            const p = remoteAudioEl.play();
-            if (p && typeof p.catch === 'function') p.catch(() => {});
-        } catch {}
-
-        // Optional: WebAudio unlock
         const AC = window.AudioContext || window.webkitAudioContext;
-        if (!AC) return true;
+        if (!AC) return false;
 
         if (!callAudioCtx || callAudioCtx.state === 'closed') callAudioCtx = new AC();
-        if (callAudioCtx.state === 'suspended') {
-            const p = callAudioCtx.resume();
-            if (p && typeof p.catch === 'function') p.catch(() => {});
-            await p;
+
+        // Prime/unlock WebAudio synchronously in the click gesture.
+        if (!callAudioCtx.__primed) {
+            const gain = callAudioCtx.createGain();
+            gain.gain.value = 0.0001; // almost silent (0 can be ignored on some browsers)
+            const osc = callAudioCtx.createOscillator();
+            osc.frequency.value = 440;
+            osc.connect(gain);
+            gain.connect(callAudioCtx.destination);
+            osc.start();
+            osc.stop(callAudioCtx.currentTime + 0.05);
+            callAudioCtx.__primed = true;
         }
+
+        if (callAudioCtx.state === 'suspended') {
+            // Don't await - keep user activation context.
+            callAudioCtx.resume().catch(() => {});
+        }
+
+        // Prime a hidden <audio> element too (fallback path).
+        try {
+            if (!remoteAudioEl) {
+                remoteAudioEl = document.createElement('audio');
+                remoteAudioEl.id = 'remote-audio';
+                remoteAudioEl.autoplay = true;
+                remoteAudioEl.playsInline = true;
+                remoteAudioEl.controls = false;
+                remoteAudioEl.style.display = 'none';
+                document.body.appendChild(remoteAudioEl);
+            }
+            if (!remoteAudioEl.__primed) {
+                remoteAudioEl.muted = true;
+                remoteAudioEl.volume = 0;
+                remoteAudioEl.src = 'data:audio/wav;base64,UklGRmQGAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YUAGAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
+                const p = remoteAudioEl.play();
+                if (p && typeof p.catch === 'function') p.catch(() => {});
+                remoteAudioEl.__primed = true;
+            }
+        } catch (e) {
+            console.warn('[CALL] audio element prime failed', e);
+        }
+
         return true;
     } catch (e) {
-        console.warn('[CALL] ensureCallAudioUnlocked failed', e);
+        console.warn('[CALL] AudioContext init failed', e);
         return false;
     }
 }
@@ -1059,10 +1074,22 @@ async function ensureCallAudioUnlocked() {
 function attachRemoteAudio(stream) {
     if (!stream) return;
 
-    // Make sure audio tracks are enabled
     try { stream.getAudioTracks().forEach(t => t.enabled = true); } catch {}
 
-    // 1) Primed hidden <audio> element (most reliable after priming in user gesture)
+    // 1) WebAudio (самый надёжный против autoplay-блокировок)
+    try {
+        if (callAudioCtx && callAudioCtx.state === 'running') {
+            if (remoteAudioNode) { try { remoteAudioNode.disconnect(); } catch {} remoteAudioNode = null; }
+            const src = callAudioCtx.createMediaStreamSource(stream);
+            src.connect(callAudioCtx.destination);
+            remoteAudioNode = src;
+            return;
+        }
+    } catch (e) {
+        console.warn('[CALL] WebAudio attach failed', e);
+    }
+
+    // 2) Fallback: скрытый <audio> (может блокироваться политиками autoplay)
     try {
         if (!remoteAudioEl) {
             remoteAudioEl = document.createElement('audio');
@@ -1073,31 +1100,13 @@ function attachRemoteAudio(stream) {
             remoteAudioEl.style.display = 'none';
             document.body.appendChild(remoteAudioEl);
         }
-
         remoteAudioEl.muted = false;
         remoteAudioEl.volume = 1;
         remoteAudioEl.srcObject = stream;
-
         const p = remoteAudioEl.play();
-        if (p && typeof p.catch === 'function') {
-            p.catch(() => console.warn('[CALL] remoteAudioEl.play blocked'));
-        }
+        if (p && typeof p.catch === 'function') p.catch(() => console.warn('[CALL] audio.play blocked'));
     } catch (e) {
         console.warn('[CALL] audio element attach failed', e);
-    }
-
-    // 2) Optional WebAudio routing (best-effort)
-    try {
-        if (callAudioCtx && callAudioCtx.state === 'running') {
-            if (remoteAudioNode) { try { remoteAudioNode.disconnect(); } catch {} remoteAudioNode = null; }
-            if (stream.getAudioTracks && stream.getAudioTracks().length > 0) {
-                const src = callAudioCtx.createMediaStreamSource(stream);
-                src.connect(callAudioCtx.destination);
-                remoteAudioNode = src;
-            }
-        }
-    } catch (e) {
-        console.warn('[CALL] WebAudio attach failed', e);
     }
 }
 
@@ -1113,7 +1122,7 @@ window.startCall = async (e) => {
 
     try {
         callPartnerId = currentChat ? currentChat.id : null;
-        await ensureCallAudioUnlocked();
+        ensureCallAudioUnlocked();
         localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
 
         const localVideo = document.getElementById('local-video');
@@ -1144,16 +1153,15 @@ window.startCall = async (e) => {
         });
 
         currentPeer.on('stream', (remoteStream) => {
-            console.log('[CALL] remote stream');
+            console.log('[CALL] remote stream', {audioTracks: (remoteStream && remoteStream.getAudioTracks ? remoteStream.getAudioTracks().length : null)});
             try { attachRemoteAudio(remoteStream); } catch {}
-
             const remoteVideo = document.getElementById('remote-video');
+            const useWebAudio = !!(callAudioCtx && callAudioCtx.state === 'running');
             if (remoteVideo) {
-                // keep video muted to avoid double audio; audio goes through hidden <audio> element
-                remoteVideo.muted = true;
-                remoteVideo.volume = 0;
+                remoteVideo.muted = useWebAudio; // чтобы не было двойного звука
+                remoteVideo.volume = 1;
             }
-            attachAndPlayVideo(remoteVideo, remoteStream, true);
+            attachAndPlayVideo(remoteVideo, remoteStream, useWebAudio);
             document.getElementById('call-placeholder').style.display = 'none';
         });
 currentPeer.on('connect', () => {
@@ -1181,7 +1189,7 @@ window.acceptCall = async () => {
 
     try {
         callPartnerId = incomingCallData ? incomingCallData.from : null;
-        await ensureCallAudioUnlocked();
+        ensureCallAudioUnlocked();
         localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
 
         const localVideo = document.getElementById('local-video');
@@ -1210,16 +1218,15 @@ window.acceptCall = async () => {
         });
 
         currentPeer.on('stream', (remoteStream) => {
-            console.log('[CALL] remote stream');
+            console.log('[CALL] remote stream', {audioTracks: (remoteStream && remoteStream.getAudioTracks ? remoteStream.getAudioTracks().length : null)});
             try { attachRemoteAudio(remoteStream); } catch {}
-
             const remoteVideo = document.getElementById('remote-video');
+            const useWebAudio = !!(callAudioCtx && callAudioCtx.state === 'running');
             if (remoteVideo) {
-                // keep video muted to avoid double audio; audio goes through hidden <audio> element
-                remoteVideo.muted = true;
-                remoteVideo.volume = 0;
+                remoteVideo.muted = useWebAudio; // чтобы не было двойного звука
+                remoteVideo.volume = 1;
             }
-            attachAndPlayVideo(remoteVideo, remoteStream, true);
+            attachAndPlayVideo(remoteVideo, remoteStream, useWebAudio);
             document.getElementById('call-placeholder').style.display = 'none';
         });
 currentPeer.on('connect', () => {
