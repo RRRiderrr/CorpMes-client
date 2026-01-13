@@ -1054,12 +1054,12 @@ function primeCallAudio() {
     } catch {}
 }
 
-function ensureCallAudioUnlocked() {
+async function ensureCallAudioUnlocked() {
     try {
         const AC = window.AudioContext || window.webkitAudioContext;
         if (!AC) return false;
         if (!callAudioCtx || callAudioCtx.state === 'closed') callAudioCtx = new AC();
-        if (callAudioCtx.state === 'suspended') await callAudioCtx.resume();
+        if (callAudioCtx.state === 'suspended') try { await callAudioCtx.resume(); } catch(_) {}
         return callAudioCtx.state === 'running';
     } catch (e) {
         console.warn('[CALL] AudioContext init failed', e);
