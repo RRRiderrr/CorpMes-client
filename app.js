@@ -1016,37 +1016,48 @@ function attachAndPlayVideo(el, stream, forceMute = false) {
     }
 }
 
+async 
 function primeCallAudio() {
+    // Максимально ранний "unlock" аудио в момент клика (важно для Chrome/Edge + инкогнито)
     try {
-        // Примим аудио СИНХРОННО в момент клика, иначе Chromium (особенно инкогнито) может "задушить" звук.
+        if (!remoteAudioEl) {
+            remoteAudioEl = document.createElement('audio');
+            remoteAudioEl.id = 'remote-audio';
+            remoteAudioEl.autoplay = true;
+            remoteAudioEl.playsInline = true;
+            remoteAudioEl.controls = false;
+            remoteAudioEl.style.display = 'none';
+            document.body.appendChild(remoteAudioEl);
+        }
+        // тихий приминг
+        remoteAudioEl.muted = true;
+        remoteAudioEl.volume = 0;
+        remoteAudioEl.srcObject = null;
+        remoteAudioEl.src = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAESsAACJWAAACABAAZGF0YQAAAAA='; // 1-2мс тишины
+        const p = remoteAudioEl.play();
+        if (p && typeof p.catch === 'function') p.catch(() => {});
+    } catch {}
+
+    try {
         const AC = window.AudioContext || window.webkitAudioContext;
         if (!AC) return;
-
         if (!callAudioCtx || callAudioCtx.state === 'closed') callAudioCtx = new AC();
-
-        // Важно: resume() без await — остаёмся в user-gesture.
-        if (callAudioCtx.state === 'suspended') {
-            callAudioCtx.resume().catch(() => {});
-        }
-
-        // Тихий короткий "пик" через WebAudio — надёжно разлочивает вывод звука.
-        const osc = callAudioCtx.createOscillator();
-        const gain = callAudioCtx.createGain();
-        gain.gain.value = 0.00001;
-        osc.connect(gain);
-        gain.connect(callAudioCtx.destination);
-        osc.start(0);
-        osc.stop(callAudioCtx.currentTime + 0.02);
-    } catch (e) {
-        console.warn('[CALL] primeCallAudio failed', e);
-    }
+        // Разлочить вывод через очень тихий осциллятор
+        const o = callAudioCtx.createOscillator();
+        const g = callAudioCtx.createGain();
+        g.gain.value = 0.00001;
+        o.connect(g);
+        g.connect(callAudioCtx.destination);
+        o.start();
+        o.stop(callAudioCtx.currentTime + 0.02);
+        if (callAudioCtx.state === 'suspended') callAudioCtx.resume().catch(() => {});
+    } catch {}
 }
 
-async function ensureCallAudioUnlocked() {
+function ensureCallAudioUnlocked() {
     try {
         const AC = window.AudioContext || window.webkitAudioContext;
         if (!AC) return false;
-
         if (!callAudioCtx || callAudioCtx.state === 'closed') callAudioCtx = new AC();
         if (callAudioCtx.state === 'suspended') await callAudioCtx.resume();
         return callAudioCtx.state === 'running';
@@ -1056,57 +1067,70 @@ async function ensureCallAudioUnlocked() {
     }
 }
 
+
 function attachRemoteAudio(stream) {
     if (!stream) return;
 
     try { stream.getAudioTracks().forEach(t => t.enabled = true); } catch {}
 
-    // Всегда глушим видео-элемент, чтобы не получить "пустой" autoplay-блок на нем
+    // Главный вывод — через <audio>, после priming это работает стабильнее всего (и даёт иконку звука на вкладке)
     try {
-        const rv = document.getElementById('remote-video');
-        if (rv) { rv.muted = true; rv.volume = 0; }
-    } catch {}
-
-    // 1) WebAudio (самый надежный путь). Даже если ctx suspended — разлочим и подключим.
-    (async () => {
-        const ok = await ensureCallAudioUnlocked();
-        if (!ok) throw new Error('AudioContext not running');
-
-        if (remoteAudioNode) { try { remoteAudioNode.disconnect(); } catch {} remoteAudioNode = null; }
-        const src = callAudioCtx.createMediaStreamSource(stream);
-        src.connect(callAudioCtx.destination);
-        remoteAudioNode = src;
-        console.log('[CALL] remote audio attached via WebAudio');
-    })().catch((e) => {
-        console.warn('[CALL] WebAudio attach failed', e);
-
-        // 2) Fallback: скрытый <audio> (иногда может блокироваться, но после primeCallAudio обычно ок)
-        try {
-            if (!remoteAudioEl) {
-                remoteAudioEl = document.createElement('audio');
-                remoteAudioEl.id = 'remote-audio';
-                remoteAudioEl.autoplay = true;
-                remoteAudioEl.playsInline = true;
-                remoteAudioEl.controls = false;
-                remoteAudioEl.muted = false;
-                remoteAudioEl.volume = 1;
-                remoteAudioEl.style.display = 'none';
-                document.body.appendChild(remoteAudioEl);
-            }
-            remoteAudioEl.srcObject = stream;
-            const p = remoteAudioEl.play();
-            if (p && typeof p.catch === 'function') p.catch(() => console.warn('[CALL] audio.play blocked'));
-        } catch (e2) {
-            console.warn('[CALL] audio element attach failed', e2);
+        if (!remoteAudioEl) {
+            remoteAudioEl = document.createElement('audio');
+            remoteAudioEl.id = 'remote-audio';
+            remoteAudioEl.autoplay = true;
+            remoteAudioEl.playsInline = true;
+            remoteAudioEl.controls = false;
+            remoteAudioEl.style.display = 'none';
+            document.body.appendChild(remoteAudioEl);
         }
-    });
+        remoteAudioEl.src = '';
+        remoteAudioEl.srcObject = stream;
+        remoteAudioEl.muted = false;
+        remoteAudioEl.volume = 1;
+
+        const p = remoteAudioEl.play();
+        if (p && typeof p.catch === 'function') p.catch(() => console.warn('[CALL] audio.play blocked'));
+    } catch (e) {
+        console.warn('[CALL] audio element attach failed', e);
+    }
+
+    // Дополнительно (fallback) — WebAudio, если вдруг элемент блокируется
+    try {
+        const AC = window.AudioContext || window.webkitAudioContext;
+        if (AC) {
+            if (!callAudioCtx || callAudioCtx.state === 'closed') callAudioCtx = new AC();
+            if (callAudioCtx.state === 'suspended') callAudioCtx.resume().catch(() => {});
+            if (callAudioCtx.state === 'running') {
+                if (remoteAudioNode) { try { remoteAudioNode.disconnect(); } catch {} remoteAudioNode = null; }
+                const src = callAudioCtx.createMediaStreamSource(stream);
+                src.connect(callAudioCtx.destination);
+                remoteAudioNode = src;
+            }
+        }
+    } catch (e) {
+        console.warn('[CALL] WebAudio attach failed', e);
+    }
+
+    try {
+        console.log('[CALL] audio status', {
+            audioTracks: (stream.getAudioTracks() || []).length,
+            elPaused: remoteAudioEl ? remoteAudioEl.paused : null,
+            elMuted: remoteAudioEl ? remoteAudioEl.muted : null,
+            ctxState: callAudioCtx ? callAudioCtx.state : null
+        });
+    } catch {}
 }
+
 
 window.startCall = async (e) => {
     if (e) e.stopPropagation();
     if (!currentChat || currentChat.type === 'group') return alert("Звонки только тет-а-тет");
     if (!socket) return alert("Нет соединения с сервером");
+
+    // ВАЖНО: разлочить звук в момент клика, до любых await
     primeCallAudio();
+
 
     document.getElementById('remote-avatar-call').src = currentChat.avatar ? serverUrl + currentChat.avatar : 'https://placehold.co/150';
     document.getElementById('remote-name-call').textContent = "Connecting to " + (currentChat.nickname || 'user') + "...";
@@ -1149,6 +1173,7 @@ window.startCall = async (e) => {
             console.log('[CALL] remote stream');
             try { attachRemoteAudio(remoteStream); } catch {}
             const remoteVideo = document.getElementById('remote-video');
+            remoteVideo.muted = true; remoteVideo.volume = 0;
             const useWebAudio = !!(callAudioCtx && callAudioCtx.state === 'running');
             if (remoteVideo) {
                 remoteVideo.muted = useWebAudio; // чтобы не было двойного звука
@@ -1174,6 +1199,7 @@ currentPeer.on('connect', () => {
 
 
 window.acceptCall = async () => {
+    // ВАЖНО: разлочить звук в момент клика, до любых await
     primeCallAudio();
     document.getElementById('incoming-call-modal').style.display = 'none';
     document.getElementById('active-call-modal').style.display = 'flex';
@@ -1215,6 +1241,7 @@ window.acceptCall = async () => {
             console.log('[CALL] remote stream');
             try { attachRemoteAudio(remoteStream); } catch {}
             const remoteVideo = document.getElementById('remote-video');
+            remoteVideo.muted = true; remoteVideo.volume = 0;
             const useWebAudio = !!(callAudioCtx && callAudioCtx.state === 'running');
             if (remoteVideo) {
                 remoteVideo.muted = useWebAudio; // чтобы не было двойного звука
@@ -1379,13 +1406,13 @@ window.endCallUI = () => {
 
     // Audio cleanup
     if (remoteAudioNode) { try { remoteAudioNode.disconnect(); } catch {} remoteAudioNode = null; }
-    // Не закрываем AudioContext, иначе Chromium снова может заблокировать звук на следующем звонке.
-    // (Только отсоединяем ноды выше.)
+    if (callAudioCtx) { try { callAudioCtx.close(); } catch {} callAudioCtx = null; }
     if (remoteAudioEl) { try { remoteAudioEl.srcObject = null; remoteAudioEl.remove(); } catch {} remoteAudioEl = null; }
 
     // UI / media elements cleanup
     const remoteVideo = document.getElementById('remote-video');
-    const localVideo = document.getElementById('local-video');
+    remoteVideo.muted = true; remoteVideo.volume = 0;
+            const localVideo = document.getElementById('local-video');
     if (remoteVideo) { remoteVideo.srcObject = null; try { remoteVideo.load(); } catch {} }
     if (localVideo) { localVideo.srcObject = null; try { localVideo.load(); } catch {} }
 
