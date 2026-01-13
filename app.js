@@ -479,9 +479,9 @@ function connectToServer() {
 
         incomingCallData = data;
         incomingSignalQueue = [];
-        if (sig) incomingSignalQueue.push(sig);
-
-        document.getElementById('incoming-call-modal').style.display = 'flex';
+        // Первый offer храним в incomingCallData, а не в очереди, чтобы не задублировать
+        if (sig) incomingCallData.signal = sig;
+document.getElementById('incoming-call-modal').style.display = 'flex';
         document.getElementById('caller-name').textContent = data.name || 'Входящий звонок';
     });
 
@@ -1116,9 +1116,11 @@ window.acceptCall = async () => {
         // Прокидываем все сигналы, которые успели прийти до нажатия "Принять"
         const signals = Array.isArray(incomingSignalQueue) ? incomingSignalQueue.slice() : [];
         const first = incomingCallData.signal || incomingCallData.signalData;
-        if (first) signals.unshift(first);
-
-        for (const s of signals) {
+        if (first) {
+            const hasOffer = signals.some(s => s && s.type === 'offer');
+            if (!hasOffer) signals.unshift(first);
+        }
+for (const s of signals) {
             if (!s) continue;
             try { currentPeer.signal(s); } catch (e) { console.warn(e); }
         }
