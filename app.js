@@ -16,6 +16,13 @@ let currentAudioDevice = null;
 let currentVideoDevice = null;
 let isScreenSharing = false;
 
+let callPartnerId = null;
+let lastCallPartnerId = null;
+let lastCallEndedAt = 0;
+let callAudioCtx = null;
+let remoteAudioNode = null;
+let remoteAudioEl = null;
+
 // Редактирование / UI
 let editingMessageId = null;
 let selectedMessageId = null;
@@ -459,6 +466,14 @@ function connectToServer() {
     // ЗВОНКИ
     socket.on('call_incoming', (data) => {
         const sig = data && (data.signal || data.signalData);
+        // Если мы сейчас не в звонке и нет входящего звонка, но прилетел не-offer (обычно это поздние ICE-кандидаты) — игнорим.
+        // Иначе может "залипнуть" состояние и не получится позвонить повторно без перезагрузки.
+        if (!currentPeer && !incomingCallData && sig && sig.type && sig.type !== 'offer') {
+            const now = Date.now();
+            if (now - lastCallEndedAt < 3000 && data && data.from && data.from === lastCallPartnerId) return;
+            return;
+        }
+
         // Если уже в активном звонке — это, скорее всего, trickle ICE от второй стороны
         if (currentPeer && !currentPeer.destroyed && sig) {
             try { currentPeer.signal(sig); } catch (e) { console.warn(e); }
@@ -491,10 +506,9 @@ socket.on('call_accepted', (signal) => {
         }
     });
     
-    socket.on('call_busy', () => { alert("Абонент занят"); endCall(); });
-    socket.on('call_ended', () => { endCall(); });
-
-    // ГРУППЫ
+    socket.on('call_busy', () => { alert("Абонент занят"); endCallUI(); });
+socket.on('call_ended', () => { endCallUI(); });
+// ГРУППЫ
     socket.on('contacts_list', (users) => {
         const list = document.getElementById('group-candidates-list');
         list.innerHTML = '';
@@ -1002,6 +1016,56 @@ function attachAndPlayVideo(el, stream, forceMute = false) {
     }
 }
 
+async function ensureCallAudioUnlocked() {
+    try {
+        const AC = window.AudioContext || window.webkitAudioContext;
+        if (!AC) return false;
+        if (!callAudioCtx || callAudioCtx.state === 'closed') callAudioCtx = new AC();
+        if (callAudioCtx.state === 'suspended') await callAudioCtx.resume();
+        return callAudioCtx.state === 'running';
+    } catch (e) {
+        console.warn('[CALL] AudioContext init failed', e);
+        return false;
+    }
+}
+
+function attachRemoteAudio(stream) {
+    if (!stream) return;
+
+    try { stream.getAudioTracks().forEach(t => t.enabled = true); } catch {}
+
+    // 1) WebAudio (самый надёжный против autoplay-блокировок)
+    try {
+        if (callAudioCtx && callAudioCtx.state === 'running') {
+            if (remoteAudioNode) { try { remoteAudioNode.disconnect(); } catch {} remoteAudioNode = null; }
+            const src = callAudioCtx.createMediaStreamSource(stream);
+            src.connect(callAudioCtx.destination);
+            remoteAudioNode = src;
+            return;
+        }
+    } catch (e) {
+        console.warn('[CALL] WebAudio attach failed', e);
+    }
+
+    // 2) Fallback: скрытый <audio> (может блокироваться политиками autoplay)
+    try {
+        if (!remoteAudioEl) {
+            remoteAudioEl = document.createElement('audio');
+            remoteAudioEl.id = 'remote-audio';
+            remoteAudioEl.autoplay = true;
+            remoteAudioEl.playsInline = true;
+            remoteAudioEl.controls = false;
+            remoteAudioEl.style.display = 'none';
+            document.body.appendChild(remoteAudioEl);
+        }
+        remoteAudioEl.srcObject = stream;
+        const p = remoteAudioEl.play();
+        if (p && typeof p.catch === 'function') p.catch(() => console.warn('[CALL] audio.play blocked'));
+    } catch (e) {
+        console.warn('[CALL] audio element attach failed', e);
+    }
+}
+
 window.startCall = async (e) => {
     if (e) e.stopPropagation();
     if (!currentChat || currentChat.type === 'group') return alert("Звонки только тет-а-тет");
@@ -1013,6 +1077,8 @@ window.startCall = async (e) => {
     document.getElementById('active-call-modal').style.display = 'flex';
 
     try {
+        callPartnerId = currentChat ? currentChat.id : null;
+        await ensureCallAudioUnlocked();
         localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
 
         const localVideo = document.getElementById('local-video');
@@ -1043,12 +1109,18 @@ window.startCall = async (e) => {
         });
 
         currentPeer.on('stream', (remoteStream) => {
+            console.log('[CALL] remote stream');
+            try { attachRemoteAudio(remoteStream); } catch {}
             const remoteVideo = document.getElementById('remote-video');
-            attachAndPlayVideo(remoteVideo, remoteStream, false);
+            const useWebAudio = !!(callAudioCtx && callAudioCtx.state === 'running');
+            if (remoteVideo) {
+                remoteVideo.muted = useWebAudio; // чтобы не было двойного звука
+                remoteVideo.volume = 1;
+            }
+            attachAndPlayVideo(remoteVideo, remoteStream, useWebAudio);
             document.getElementById('call-placeholder').style.display = 'none';
         });
-
-        currentPeer.on('connect', () => {
+currentPeer.on('connect', () => {
             console.log('[CALL] peer connect (caller)');
             document.getElementById('call-placeholder').style.display = 'none';
         });
@@ -1072,6 +1144,8 @@ window.acceptCall = async () => {
     if (!incomingCallData) return;
 
     try {
+        callPartnerId = incomingCallData ? incomingCallData.from : null;
+        await ensureCallAudioUnlocked();
         localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
 
         const localVideo = document.getElementById('local-video');
@@ -1100,12 +1174,18 @@ window.acceptCall = async () => {
         });
 
         currentPeer.on('stream', (remoteStream) => {
+            console.log('[CALL] remote stream');
+            try { attachRemoteAudio(remoteStream); } catch {}
             const remoteVideo = document.getElementById('remote-video');
-            attachAndPlayVideo(remoteVideo, remoteStream, false);
+            const useWebAudio = !!(callAudioCtx && callAudioCtx.state === 'running');
+            if (remoteVideo) {
+                remoteVideo.muted = useWebAudio; // чтобы не было двойного звука
+                remoteVideo.volume = 1;
+            }
+            attachAndPlayVideo(remoteVideo, remoteStream, useWebAudio);
             document.getElementById('call-placeholder').style.display = 'none';
         });
-
-        currentPeer.on('connect', () => {
+currentPeer.on('connect', () => {
             console.log('[CALL] peer connect (callee)');
             document.getElementById('call-placeholder').style.display = 'none';
         });
@@ -1123,6 +1203,7 @@ window.acceptCall = async () => {
 for (const s of signals) {
             if (!s) continue;
             try { currentPeer.signal(s); } catch (e) { console.warn(e); }
+        incomingSignalQueue = [];
         }
 
     } catch (err) {
@@ -1249,24 +1330,39 @@ window.confirmScreenShare = async (withAudio) => {
 };
 
 window.endCallUI = () => {
-    if(currentPeer) { currentPeer.destroy(); currentPeer = null; }
-    if(localStream) { localStream.getTracks().forEach(t => t.stop()); localStream = null; }
-    
-    // FORCE CLEANUP
+    // фиксируем, с кем был звонок (для фильтрации поздних ICE)
+    lastCallEndedAt = Date.now();
+    lastCallPartnerId = callPartnerId;
+    callPartnerId = null;
+
+    // WebRTC cleanup
+    if (currentPeer) { try { currentPeer.destroy(); } catch {} currentPeer = null; }
+    if (localStream) { try { localStream.getTracks().forEach(t => t.stop()); } catch {} localStream = null; }
+
+    // Audio cleanup
+    if (remoteAudioNode) { try { remoteAudioNode.disconnect(); } catch {} remoteAudioNode = null; }
+    if (callAudioCtx) { try { callAudioCtx.close(); } catch {} callAudioCtx = null; }
+    if (remoteAudioEl) { try { remoteAudioEl.srcObject = null; remoteAudioEl.remove(); } catch {} remoteAudioEl = null; }
+
+    // UI / media elements cleanup
     const remoteVideo = document.getElementById('remote-video');
     const localVideo = document.getElementById('local-video');
-    remoteVideo.srcObject = null;
-    localVideo.srcObject = null;
-    remoteVideo.load(); // Detach from PiP
-    localVideo.load();
+    if (remoteVideo) { remoteVideo.srcObject = null; try { remoteVideo.load(); } catch {} }
+    if (localVideo) { localVideo.srcObject = null; try { localVideo.load(); } catch {} }
 
-    incomingCallData = null; incomingSignalQueue = []; isScreenSharing = false;
-    document.getElementById('active-call-modal').style.display = 'none'; 
-    document.getElementById('incoming-call-modal').style.display = 'none'; 
+    incomingCallData = null;
+    incomingSignalQueue = [];
+    isScreenSharing = false;
+
+    const active = document.getElementById('active-call-modal');
+    const incoming = document.getElementById('incoming-call-modal');
+    if (active) active.style.display = 'none';
+    if (incoming) incoming.style.display = 'none';
 };
 
-window.endCall = () => { 
-    const partnerId = currentChat ? currentChat.id : (incomingCallData ? incomingCallData.from : null); 
-    if(partnerId) socket.emit('end_call', { to: partnerId }); 
+
+window.endCall = () => {
+    const partnerId = callPartnerId || (currentChat ? currentChat.id : (incomingCallData ? incomingCallData.from : null));
+    if (partnerId) socket.emit('end_call', { to: partnerId });
     endCallUI();
 };
