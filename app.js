@@ -5,6 +5,17 @@ let socket;
 let currentUser = null;
 let currentChat = null; 
 let serverUrl = localStorage.getItem('serverUrl') || '';
+
+// Настройки захвата микрофона (сырое аудио, без агрессивной обработки)
+const MIC_CONSTRAINTS = {
+    audio: {
+        echoCancellation: false,
+        noiseSuppression: false,
+        autoGainControl: false
+    },
+    video: false
+};
+
 let sidebarChats = []; 
 
 // WebRTC / Звонки
@@ -1076,6 +1087,51 @@ let remoteMeterAnalyser = null;
 let remoteMeterSource = null;
 let debugBeepPlayed = false;
 
+// Local meter (проверяет, действительно ли микрофон даёт сигнал, а не тишину)
+let localMeterTimer = null;
+let localMeterAnalyser = null;
+let localMeterSource = null;
+
+function stopLocalAudioMeter() {
+    try { if (localMeterTimer) { clearInterval(localMeterTimer); localMeterTimer = null; } } catch {}
+    try { if (localMeterSource) { localMeterSource.disconnect(); localMeterSource = null; } } catch {}
+    try { if (localMeterAnalyser) { localMeterAnalyser.disconnect(); localMeterAnalyser = null; } } catch {}
+}
+
+function startLocalAudioMeter(stream, tag) {
+    try {
+        const AC = window.AudioContext || window.webkitAudioContext;
+        if (!AC) return;
+        if (!callAudioCtx || callAudioCtx.state === 'closed') callAudioCtx = new AC();
+        if (callAudioCtx.state === 'suspended') callAudioCtx.resume().catch(() => {});
+        // можно мерить даже когда suspended — но тогда просто выйдем
+        if (callAudioCtx.state !== 'running') return;
+
+        stopLocalAudioMeter();
+
+        localMeterSource = callAudioCtx.createMediaStreamSource(stream);
+        localMeterAnalyser = callAudioCtx.createAnalyser();
+        localMeterAnalyser.fftSize = 2048;
+        localMeterSource.connect(localMeterAnalyser);
+
+        const data = new Uint8Array(localMeterAnalyser.fftSize);
+        localMeterTimer = setInterval(() => {
+            try {
+                localMeterAnalyser.getByteTimeDomainData(data);
+                let sum = 0;
+                for (let i = 0; i < data.length; i++) {
+                    const v = (data[i] - 128) / 128;
+                    sum += v * v;
+                }
+                const rms = Math.sqrt(sum / data.length);
+                console.log('[CALL] local rms ' + (tag || '') + ':', rms.toFixed(4));
+            } catch {}
+        }, 800);
+    } catch (e) {
+        console.warn('[CALL] local meter failed', e);
+    }
+}
+
 function stopRemoteAudioMeter() {
     try { if (remoteMeterTimer) { clearInterval(remoteMeterTimer); remoteMeterTimer = null; } } catch {}
     try { if (remoteMeterSource) { remoteMeterSource.disconnect(); remoteMeterSource = null; } } catch {}
@@ -1228,7 +1284,8 @@ window.startCall = async (e) => {
     try {
         callPartnerId = currentChat ? currentChat.id : null;
         await ensureCallAudioUnlocked();
-        localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+        localStream = await navigator.mediaDevices.getUserMedia(MIC_CONSTRAINTS);
+        try { startLocalAudioMeter(localStream, "(caller)"); } catch {}
         try {
             const t = localStream.getAudioTracks()[0];
             if (t) { t.enabled = true; }
@@ -1304,7 +1361,8 @@ window.acceptCall = async () => {
     try {
         callPartnerId = incomingCallData ? incomingCallData.from : null;
         await ensureCallAudioUnlocked();
-        localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+        localStream = await navigator.mediaDevices.getUserMedia(MIC_CONSTRAINTS);
+        try { startLocalAudioMeter(localStream, "(callee)"); } catch {}
         try {
             const t = localStream.getAudioTracks()[0];
             if (t) { t.enabled = true; }
@@ -1507,6 +1565,7 @@ window.endCallUI = () => {
     // Audio cleanup
     if (remoteAudioNode) { try { remoteAudioNode.disconnect(); } catch {} remoteAudioNode = null; }
     try { stopRemoteAudioMeter(); } catch {}
+    try { stopLocalAudioMeter(); } catch {}
     debugBeepPlayed = false;
     // не закрываем AudioContext, чтобы не словить автоплей-блок на следующем звонке
     if (callAudioCtx) { try { if (callAudioCtx.state === 'running') callAudioCtx.suspend().catch(() => {}); } catch {} }
