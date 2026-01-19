@@ -1301,7 +1301,6 @@ window.startCall = async (e) => {
         currentPeer = new SimplePeer({
             initiator: true,
             trickle: true,
-            stream: localStream,
             config: {
                 iceServers: [
                     { urls: 'stun:stun.l.google.com:19302' },
@@ -1310,6 +1309,15 @@ window.startCall = async (e) => {
                 ]
             }
         });
+
+        // Explicitly add tracks (avoids cases where simple-peer/addStream results in silent audio)
+        try {
+            if (localStream && currentPeer && typeof currentPeer.addTrack === 'function') {
+                localStream.getTracks().forEach(function(tr) {
+                    try { currentPeer.addTrack(tr, localStream); } catch (_) {}
+                });
+            }
+        } catch (e) { console.warn('[CALL] addTrack failed', e); }
 
         currentPeer.on('signal', (signal) => {
             socket.emit('call_user', {
@@ -1378,7 +1386,6 @@ window.acceptCall = async () => {
         currentPeer = new SimplePeer({
             initiator: false,
             trickle: true,
-            stream: localStream,
             config: {
                 iceServers: [
                     { urls: 'stun:stun.l.google.com:19302' },
@@ -1387,6 +1394,15 @@ window.acceptCall = async () => {
                 ]
             }
         });
+
+        // Explicitly add tracks (avoids cases where simple-peer/addStream results in silent audio)
+        try {
+            if (localStream && currentPeer && typeof currentPeer.addTrack === 'function') {
+                localStream.getTracks().forEach(function(tr) {
+                    try { currentPeer.addTrack(tr, localStream); } catch (_) {}
+                });
+            }
+        } catch (e) { console.warn('[CALL] addTrack failed', e); }
 
         currentPeer.on('signal', (signal) => {
             socket.emit('answer_call', {
