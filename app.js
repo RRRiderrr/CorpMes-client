@@ -1299,8 +1299,9 @@ window.startCall = async (e) => {
         // ICE -> send to callee
         currentPeer.onicecandidate = (ev) => {
             if (!ev.candidate) return;
+            if (!callPartnerId) return;
             socket.emit('call_user', {
-                userToCall: currentChat.id,
+                userToCall: callPartnerId,
                 from: currentUser.id,
                 name: currentUser.nickname,
                 signal: { type: 'candidate', candidate: ev.candidate }
@@ -1312,7 +1313,7 @@ window.startCall = async (e) => {
         await currentPeer.setLocalDescription(offer);
 
         socket.emit('call_user', {
-            userToCall: currentChat.id,
+            userToCall: callPartnerId,
             from: currentUser.id,
             name: currentUser.nickname,
             signal: { type: 'offer', sdp: currentPeer.localDescription.sdp }
@@ -1355,8 +1356,9 @@ window.acceptCall = async () => {
         // ICE -> send back to caller
         currentPeer.onicecandidate = (ev) => {
             if (!ev.candidate) return;
+            if (!callPartnerId) return;
             socket.emit('answer_call', {
-                to: incomingCallData.from,
+                to: callPartnerId,
                 signal: { type: 'candidate', candidate: ev.candidate }
             });
         };
@@ -1374,7 +1376,7 @@ window.acceptCall = async () => {
         await currentPeer.setLocalDescription(answer);
 
         socket.emit('answer_call', {
-            to: incomingCallData.from,
+            to: callPartnerId,
             signal: { type: 'answer', sdp: currentPeer.localDescription.sdp }
         });
 
@@ -1400,7 +1402,7 @@ window.acceptCall = async () => {
 
 window.declineCall = () => { 
     document.getElementById('incoming-call-modal').style.display = 'none'; 
-    socket.emit('end_call', { to: incomingCallData.from }); 
+    socket.emit('end_call', { to: callPartnerId }); 
     incomingCallData = null; 
 };
 
