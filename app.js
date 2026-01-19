@@ -464,51 +464,50 @@ function connectToServer() {
     });
 
     // ЗВОНКИ
-    socket.on('call_incoming', async (data) => {
+    socket.on('call_incoming', (data) => {
         const sig = data && (data.signal || data.signalData);
-
-        // If already in a call: accept incoming trickle ICE / late signals
-        if (isPeerAlive() && sig) {
-            await applySignalToPeer(sig);
-            return;
-        }
-
-        // If we are not in call and we got not-an-offer (late ICE) -> ignore
-        if (!isPeerAlive() && !incomingCallData && sig && sig.type && sig.type !== 'offer') {
+        // Если мы сейчас не в звонке и нет входящего звонка, но прилетел не-offer (обычно это поздние ICE-кандидаты) — игнорим.
+        // Иначе может "залипнуть" состояние и не получится позвонить повторно без перезагрузки.
+        if (!currentPeer && !incomingCallData && sig && sig.type && sig.type !== 'offer') {
             const now = Date.now();
             if (now - lastCallEndedAt < 3000 && data && data.from && data.from === lastCallPartnerId) return;
             return;
         }
 
-        // If there's already an incoming call waiting -> queue signals
+        // Если уже в активном звонке — это, скорее всего, trickle ICE от второй стороны
+        if (currentPeer && !currentPeer.destroyed && sig) {
+            try { currentPeer.signal(sig); } catch (e) { console.warn(e); }
+            return;
+        }
+
+        // Если уже есть входящий звонок, но ещё не приняли — копим сигналы
         if (incomingCallData && sig) {
             incomingSignalQueue.push(sig);
             return;
         }
 
-        // If busy -> tell caller
-        if (isPeerAlive() || incomingCallData) {
+        // Если заняты — сообщаем звонящему
+        if (currentPeer || incomingCallData) {
             if (data && data.from) socket.emit('call_busy', { to: data.from });
             return;
         }
 
         incomingCallData = data;
         incomingSignalQueue = [];
+        // Первый offer храним в incomingCallData, а не в очереди, чтобы не задублировать
         if (sig) incomingCallData.signal = sig;
-
-        document.getElementById('incoming-call-modal').style.display = 'flex';
+document.getElementById('incoming-call-modal').style.display = 'flex';
         document.getElementById('caller-name').textContent = data.name || 'Входящий звонок';
     });
 
-    socket.on('call_accepted', async (signal) => {
-        if (!signal) return;
-        if (!isPeerAlive()) return;
-        await applySignalToPeer(signal);
+socket.on('call_accepted', (signal) => { 
+        if(currentPeer && !currentPeer.destroyed) {
+            try { currentPeer.signal(signal); } catch(e) { console.warn(e); }
+        }
     });
-
+    
     socket.on('call_busy', () => { alert("Абонент занят"); endCallUI(); });
-    socket.on('call_ended', () => { endCallUI(); });
-
+socket.on('call_ended', () => { endCallUI(); });
 // ГРУППЫ
     socket.on('contacts_list', (users) => {
         const list = document.getElementById('group-candidates-list');
@@ -1067,206 +1066,66 @@ function attachRemoteAudio(stream) {
     }
 }
 
-function createCallPeerConnection({ initiator, remoteUserId }) {
-    const pc = new RTCPeerConnection({
-        iceServers: [
-            { urls: 'stun:stun.l.google.com:19302' },
-            { urls: 'stun:stun1.l.google.com:19302' },
-            { urls: 'stun:global.stun.twilio.com:3478' }
-        ]
-    });
+// --- CALL DEBUG: RMS meters + WebRTC stats ---
+let callStatsTimer = null;
+let callMeterTimers = [];
 
-    // ICE -> signalling
-    pc.onicecandidate = (ev) => {
-        if (!ev.candidate) return;
-        const payload = { type: 'candidate', candidate: ev.candidate };
-        if (initiator) {
-            socket.emit('call_user', {
-                userToCall: remoteUserId,
-                from: currentUser.id,
-                name: currentUser.nickname,
-                signal: payload
-            });
-        } else {
-            socket.emit('answer_call', {
-                to: remoteUserId,
-                signal: payload
-            });
-        }
-    };
-
-    // Remote media
-    pc.ontrack = (ev) => {
-        const remoteStream = ev.streams && ev.streams[0] ? ev.streams[0] : null;
-        if (!remoteStream) return;
-
-        console.log('[CALL] remote stream');
-        try { attachRemoteAudio(remoteStream); } catch {}
-
-        const remoteVideo = document.getElementById('remote-video');
-        const useWebAudio = !!(callAudioCtx && callAudioCtx.state === 'running');
-        if (remoteVideo) {
-            remoteVideo.muted = useWebAudio;
-            remoteVideo.volume = 1;
-        }
-        attachAndPlayVideo(remoteVideo, remoteStream, useWebAudio);
-        document.getElementById('call-placeholder').style.display = 'none';
-    };
-
-    pc.onconnectionstatechange = () => {
-        console.log('[CALL] pc state:', pc.connectionState, 'signaling:', pc.signalingState);
-        if (pc.connectionState === 'connected') {
-            document.getElementById('call-placeholder').style.display = 'none';
-        }
-        if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected' || pc.connectionState === 'closed') {
-            // не агрессивно: UI сам может закрыть по кнопке, но если реально умерло — подчистим
-        }
-    };
-
-    pc.oniceconnectionstatechange = () => {
-        console.log('[CALL] ice state:', pc.iceConnectionState);
-    };
-
-    return pc;
+function stopCallDebug() {
+    if (callStatsTimer) { clearInterval(callStatsTimer); callStatsTimer = null; }
+    for (const t of callMeterTimers) { try { clearInterval(t); } catch {} }
+    callMeterTimers = [];
 }
 
-async function applyCallSignal(sig) {
-    if (!sig || !currentPeer || currentPeer.signalingState === 'closed') return;
-
-    if (sig.type === 'answer' && sig.sdp) {
-        if (currentPeer.currentRemoteDescription) return;
-        await currentPeer.setRemoteDescription({ type: 'answer', sdp: sig.sdp });
-        return;
-    }
-
-    if (sig.type === 'offer' && sig.sdp) {
-        // Мы не должны получать offer на стороне инициатора в нормальном сценарии
-        if (currentPeer.currentRemoteDescription) return;
-        await currentPeer.setRemoteDescription({ type: 'offer', sdp: sig.sdp });
-        return;
-    }
-
-    if (sig.type === 'candidate' && sig.candidate) {
-        try {
-            await currentPeer.addIceCandidate(sig.candidate);
-        } catch (e) {
-            // Иногда candidate прилетает до setRemoteDescription — в таком случае копим
-            if (incomingCallData) incomingSignalQueue.push(sig);
-            else console.warn('[CALL] addIceCandidate failed', e);
-        }
-        return;
-    }
-}
-
-
-// ==========================================
-// WEBRTC (Native RTCPeerConnection) helpers
-// ==========================================
-let pendingIceCandidates = [];
-
-function isPeerAlive() {
-    return !!(currentPeer && currentPeer.signalingState && currentPeer.signalingState !== 'closed');
-}
-
-async function applySignalToPeer(sig) {
-    if (!sig) return;
-    if (!isPeerAlive()) return;
-
+function startRmsMeter(stream, label) {
     try {
-        if (sig.type === 'offer' || sig.type === 'answer') {
-            const sdp = sig.sdp && typeof sig.sdp === 'string' ? sig.sdp : (sig.sdp && sig.sdp.sdp) || sig.sdp;
-            if (!sdp) return;
-
-            // Avoid duplicate setRemoteDescription()
-            if (currentPeer.remoteDescription && currentPeer.remoteDescription.type) {
-                // If we already have a remote description, ignore duplicate offers/answers
-                return;
+        if (!stream) return;
+        const ctx = callAudioCtx || new (window.AudioContext || window.webkitAudioContext)();
+        const src = ctx.createMediaStreamSource(stream);
+        const analyser = ctx.createAnalyser();
+        analyser.fftSize = 2048;
+        src.connect(analyser);
+        const data = new Uint8Array(analyser.fftSize);
+        const timer = setInterval(() => {
+            analyser.getByteTimeDomainData(data);
+            let sum = 0;
+            for (let i = 0; i < data.length; i++) {
+                const v = (data[i] - 128) / 128;
+                sum += v * v;
             }
-
-            await currentPeer.setRemoteDescription({ type: sig.type, sdp });
-
-            // Flush pending ICE that arrived too early
-            if (pendingIceCandidates.length) {
-                const copy = pendingIceCandidates.slice();
-                pendingIceCandidates = [];
-                for (const c of copy) {
-                    try { await currentPeer.addIceCandidate(c); } catch (e) { console.warn('[CALL] addIceCandidate (flush) failed', e); }
-                }
-            }
-
-            return;
-        }
-
-        if (sig.type === 'candidate') {
-            const cand = sig.candidate || sig;
-            if (!cand) return;
-
-            // If remoteDescription isn't set yet, queue ICE
-            if (!currentPeer.remoteDescription || !currentPeer.remoteDescription.type) {
-                pendingIceCandidates.push(cand);
-                return;
-            }
-
-            await currentPeer.addIceCandidate(cand);
-            return;
-        }
+            const rms = Math.sqrt(sum / data.length);
+            console.log(`[CALL] ${label} rms ${rms.toFixed(4)}`);
+        }, 800);
+        callMeterTimers.push(timer);
     } catch (e) {
-        console.warn('[CALL] applySignalToPeer error', e);
+        console.warn('[CALL] RMS meter failed', e);
     }
 }
 
-function createCallPeerConnection() {
-    const pc = new RTCPeerConnection({
-        iceServers: [
-            { urls: 'stun:stun.l.google.com:19302' },
-            { urls: 'stun:stun1.l.google.com:19302' },
-            { urls: 'stun:global.stun.twilio.com:3478' }
-        ]
-    });
-
-    pc.ontrack = (ev) => {
-        const remoteStream = (ev.streams && ev.streams[0]) ? ev.streams[0] : null;
-        if (!remoteStream) return;
-
-        console.log('[CALL] remote stream');
-        try { attachRemoteAudio(remoteStream); } catch {}
-
-        const remoteVideo = document.getElementById('remote-video');
-        const useWebAudio = !!(callAudioCtx && callAudioCtx.state === 'running');
-        if (remoteVideo) {
-            remoteVideo.muted = useWebAudio; // avoid double audio
-            remoteVideo.volume = 1;
-        }
-        attachAndPlayVideo(remoteVideo, remoteStream, useWebAudio);
-        document.getElementById('call-placeholder').style.display = 'none';
-    };
-
-    pc.onconnectionstatechange = () => {
-        try {
-            const st = pc.connectionState;
-            if (st === 'connected') {
-                console.log('[CALL] peer connected');
-                document.getElementById('call-placeholder').style.display = 'none';
+function startPeerStats(peer, label) {
+    try {
+        if (!peer || !peer._pc) return;
+        const pc = peer._pc;
+        if (callStatsTimer) clearInterval(callStatsTimer);
+        callStatsTimer = setInterval(async () => {
+            try {
+                const stats = await pc.getStats();
+                let out = null, inn = null;
+                stats.forEach(r => {
+                    if (r.type === 'outbound-rtp' && r.kind === 'audio' && !r.isRemote) out = r;
+                    if (r.type === 'inbound-rtp' && r.kind === 'audio' && !r.isRemote) inn = r;
+                });
+                const outBytes = out?.bytesSent ?? 0;
+                const inBytes = inn?.bytesReceived ?? 0;
+                console.log(`[CALL] stats ${label} audio outBytes=${outBytes} inBytes=${inBytes}`);
+            } catch (e) {
+                // ignore
             }
-            if (st === 'failed' || st === 'disconnected' || st === 'closed') {
-                console.log('[CALL] peer state:', st);
-                // Don't auto-end on 'disconnected' (can recover). On 'failed' we end.
-                if (st === 'failed' || st === 'closed') endCallUI();
-            }
-        } catch {}
-    };
-
-    pc.oniceconnectionstatechange = () => {
-        try {
-            const st = pc.iceConnectionState;
-            if (st === 'failed') {
-                console.warn('[CALL] ICE failed');
-            }
-        } catch {}
-    };
-
-    return pc;
+        }, 1000);
+    } catch (e) {
+        console.warn('[CALL] stats failed', e);
+    }
 }
+
 
 window.startCall = async (e) => {
     if (e) e.stopPropagation();
@@ -1280,44 +1139,65 @@ window.startCall = async (e) => {
 
     try {
         callPartnerId = currentChat ? currentChat.id : null;
-        pendingIceCandidates = [];
-
         await ensureCallAudioUnlocked();
         localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+        startRmsMeter(localStream, 'local (caller)');
 
         const localVideo = document.getElementById('local-video');
         const localWrapper = document.getElementById('local-video-wrapper');
         if (localWrapper) localWrapper.style.display = 'none';
         attachAndPlayVideo(localVideo, localStream, true);
 
-        // Create native WebRTC peer
-        currentPeer = createCallPeerConnection();
+        currentPeer = new SimplePeer({
+            initiator: true,
+            trickle: true,
+            config: {
+                iceServers: [
+                    { urls: 'stun:stun.l.google.com:19302' },
+                    { urls: 'stun:stun1.l.google.com:19302' },
+                    { urls: 'stun:global.stun.twilio.com:3478' }
+                ]
+            }
+        });
 
-        // Add local tracks
-        localStream.getTracks().forEach(t => currentPeer.addTrack(t, localStream));
+        // ВАЖНО: добавляем треки явно (addTrack), а не через stream: localStream
+        try {
+            localStream.getTracks().forEach(t => currentPeer.addTrack(t, localStream));
+        } catch (e) {
+            console.warn('[CALL] addTrack failed (caller)', e);
+        }
+        startPeerStats(currentPeer, 'caller');
 
-        // ICE -> send to callee
-        currentPeer.onicecandidate = (ev) => {
-            if (!ev.candidate) return;
-            if (!callPartnerId) return;
+
+        currentPeer.on('signal', (signal) => {
             socket.emit('call_user', {
-                userToCall: callPartnerId,
+                userToCall: currentChat.id,
                 from: currentUser.id,
                 name: currentUser.nickname,
-                signal: { type: 'candidate', candidate: ev.candidate }
+                signal
             });
-        };
-
-        // Create offer and send
-        const offer = await currentPeer.createOffer({ offerToReceiveAudio: true, offerToReceiveVideo: false });
-        await currentPeer.setLocalDescription(offer);
-
-        socket.emit('call_user', {
-            userToCall: callPartnerId,
-            from: currentUser.id,
-            name: currentUser.nickname,
-            signal: { type: 'offer', sdp: currentPeer.localDescription.sdp }
         });
+
+        currentPeer.on('stream', (remoteStream) => {
+            console.log('[CALL] remote stream');
+            try { attachRemoteAudio(remoteStream); } catch {}
+            startRmsMeter(remoteStream, 'remote');
+            const remoteVideo = document.getElementById('remote-video');
+            const useWebAudio = !!(callAudioCtx && callAudioCtx.state === 'running');
+            if (remoteVideo) {
+                remoteVideo.muted = useWebAudio; // чтобы не было двойного звука
+                remoteVideo.volume = 1;
+            }
+            attachAndPlayVideo(remoteVideo, remoteStream, useWebAudio);
+            document.getElementById('call-placeholder').style.display = 'none';
+        });
+currentPeer.on('connect', () => {
+            console.log('[CALL] peer connect (caller)');
+            document.getElementById('call-placeholder').style.display = 'none';
+        });
+
+        currentPeer.on('error', (err) => console.error('[CALL] peer error (caller)', err));
+        currentPeer.on('close', () => console.log('[CALL] peer close (caller)'));
 
     } catch (err) {
         console.error(err);
@@ -1325,7 +1205,6 @@ window.startCall = async (e) => {
         endCall();
     }
 };
-
 
 
 window.acceptCall = async () => {
@@ -1337,60 +1216,76 @@ window.acceptCall = async () => {
 
     try {
         callPartnerId = incomingCallData ? incomingCallData.from : null;
-        pendingIceCandidates = [];
-
         await ensureCallAudioUnlocked();
         localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+        startRmsMeter(localStream, 'local (callee)');
 
         const localVideo = document.getElementById('local-video');
         const localWrapper = document.getElementById('local-video-wrapper');
         if (localWrapper) localWrapper.style.display = 'none';
         attachAndPlayVideo(localVideo, localStream, true);
 
-        // Create native WebRTC peer
-        currentPeer = createCallPeerConnection();
-
-        // Add local tracks
-        localStream.getTracks().forEach(t => currentPeer.addTrack(t, localStream));
-
-        // ICE -> send back to caller
-        currentPeer.onicecandidate = (ev) => {
-            if (!ev.candidate) return;
-            if (!callPartnerId) return;
-            socket.emit('answer_call', {
-                to: callPartnerId,
-                signal: { type: 'candidate', candidate: ev.candidate }
-            });
-        };
-
-        // Apply the initial offer
-        const first = incomingCallData.signal || incomingCallData.signalData;
-        if (!first || first.type !== 'offer') {
-            throw new Error('No offer in incoming call');
-        }
-
-        await currentPeer.setRemoteDescription({ type: 'offer', sdp: first.sdp });
-
-        // Create answer
-        const answer = await currentPeer.createAnswer();
-        await currentPeer.setLocalDescription(answer);
-
-        socket.emit('answer_call', {
-            to: callPartnerId,
-            signal: { type: 'answer', sdp: currentPeer.localDescription.sdp }
+        currentPeer = new SimplePeer({
+            initiator: false,
+            trickle: true,
+            config: {
+                iceServers: [
+                    { urls: 'stun:stun.l.google.com:19302' },
+                    { urls: 'stun:stun1.l.google.com:19302' },
+                    { urls: 'stun:global.stun.twilio.com:3478' }
+                ]
+            }
         });
 
-        // Apply queued candidates that came before accept
-        const queued = Array.isArray(incomingSignalQueue) ? incomingSignalQueue.slice() : [];
-        incomingSignalQueue = [];
-        for (const s of queued) {
-            if (!s) continue;
-            if (s.type === 'candidate' && s.candidate) {
-                try { await currentPeer.addIceCandidate(s.candidate); } catch (e) { console.warn('[CALL] addIceCandidate (queued) failed', e); }
-            }
+        // ВАЖНО: добавляем треки явно (addTrack), а не через stream: localStream
+        try {
+            localStream.getTracks().forEach(t => currentPeer.addTrack(t, localStream));
+        } catch (e) {
+            console.warn('[CALL] addTrack failed (callee)', e);
         }
+        startPeerStats(currentPeer, 'callee');
 
-        incomingCallData = null;
+
+        currentPeer.on('signal', (signal) => {
+            socket.emit('answer_call', {
+                to: incomingCallData.from,
+                signal
+            });
+        });
+
+        currentPeer.on('stream', (remoteStream) => {
+            console.log('[CALL] remote stream');
+            try { attachRemoteAudio(remoteStream); } catch {}
+            startRmsMeter(remoteStream, 'remote');
+            const remoteVideo = document.getElementById('remote-video');
+            const useWebAudio = !!(callAudioCtx && callAudioCtx.state === 'running');
+            if (remoteVideo) {
+                remoteVideo.muted = useWebAudio; // чтобы не было двойного звука
+                remoteVideo.volume = 1;
+            }
+            attachAndPlayVideo(remoteVideo, remoteStream, useWebAudio);
+            document.getElementById('call-placeholder').style.display = 'none';
+        });
+currentPeer.on('connect', () => {
+            console.log('[CALL] peer connect (callee)');
+            document.getElementById('call-placeholder').style.display = 'none';
+        });
+
+        currentPeer.on('error', (err) => console.error('[CALL] peer error (callee)', err));
+        currentPeer.on('close', () => console.log('[CALL] peer close (callee)'));
+
+        // Прокидываем все сигналы, которые успели прийти до нажатия "Принять"
+        const signals = Array.isArray(incomingSignalQueue) ? incomingSignalQueue.slice() : [];
+        const first = incomingCallData.signal || incomingCallData.signalData;
+        if (first) {
+            const hasOffer = signals.some(s => s && s.type === 'offer');
+            if (!hasOffer) signals.unshift(first);
+        }
+for (const s of signals) {
+            if (!s) continue;
+            try { currentPeer.signal(s); } catch (e) { console.warn(e); }
+        incomingSignalQueue = [];
+        }
 
     } catch (err) {
         console.error(err);
@@ -1402,7 +1297,7 @@ window.acceptCall = async () => {
 
 window.declineCall = () => { 
     document.getElementById('incoming-call-modal').style.display = 'none'; 
-    socket.emit('end_call', { to: callPartnerId }); 
+    socket.emit('end_call', { to: incomingCallData.from }); 
     incomingCallData = null; 
 };
 
@@ -1423,8 +1318,8 @@ window.changeDevice = async (kind, deviceId) => {
 
         const newStream = await navigator.mediaDevices.getUserMedia(constraints);
         
-        if (currentPeer && currentPeer.signalingState !== 'closed') {
-            const senders = currentPeer.getSenders();
+        if(currentPeer && !currentPeer.destroyed) {
+            const senders = currentPeer._pc.getSenders();
             newStream.getTracks().forEach(track => {
                 const sender = senders.find(s => s.track.kind === track.kind);
                 if(sender) sender.replaceTrack(track);
@@ -1465,7 +1360,7 @@ window.toggleCam = async () => {
         const vidStream = await navigator.mediaDevices.getUserMedia({ video: currentVideoDevice ? { deviceId: { exact: currentVideoDevice } } : true });
         const vidTrack = vidStream.getVideoTracks()[0];
         localStream.addTrack(vidTrack);
-        if (currentPeer && currentPeer.signalingState !== 'closed') currentPeer.addTrack(vidTrack, localStream);
+        if(currentPeer && !currentPeer.destroyed) currentPeer.addTrack(vidTrack, localStream);
         
         document.getElementById('local-video').srcObject = localStream;
         document.getElementById('btn-cam').classList.add('active');
@@ -1496,8 +1391,8 @@ window.confirmScreenShare = async (withAudio) => {
         isScreenSharing = true;
         
         const screenTrack = stream.getVideoTracks()[0];
-        if (currentPeer && currentPeer.signalingState !== 'closed') {
-            const senders = currentPeer.getSenders();
+        if(currentPeer && !currentPeer.destroyed) {
+            const senders = currentPeer._pc.getSenders();
             const sender = senders.find(s => s.track.kind === 'video');
             if(sender) sender.replaceTrack(screenTrack);
             else currentPeer.addTrack(screenTrack, localStream); 
@@ -1516,17 +1411,19 @@ window.confirmScreenShare = async (withAudio) => {
 };
 
 window.endCallUI = () => {
+    stopCallDebug();
     // фиксируем, с кем был звонок (для фильтрации поздних ICE)
     lastCallEndedAt = Date.now();
     lastCallPartnerId = callPartnerId;
     callPartnerId = null;
 
     // WebRTC cleanup
-    if (currentPeer) { try { currentPeer.close(); } catch {} currentPeer = null; }
+    if (currentPeer) { try { currentPeer.destroy(); } catch {} currentPeer = null; }
     if (localStream) { try { localStream.getTracks().forEach(t => t.stop()); } catch {} localStream = null; }
+
     // Audio cleanup
     if (remoteAudioNode) { try { remoteAudioNode.disconnect(); } catch {} remoteAudioNode = null; }
-    // Keep callAudioCtx open to avoid autoplay lock on next call
+    if (callAudioCtx) { try { callAudioCtx.close(); } catch {} callAudioCtx = null; }
     if (remoteAudioEl) { try { remoteAudioEl.srcObject = null; remoteAudioEl.remove(); } catch {} remoteAudioEl = null; }
 
     // UI / media elements cleanup
