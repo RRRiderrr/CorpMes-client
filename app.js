@@ -1067,6 +1067,78 @@ async function ensureCallAudioUnlocked() {
 }
 
 
+
+// ==========================================
+// CALL AUDIO DEBUG / METER
+// ==========================================
+let remoteMeterTimer = null;
+let remoteMeterAnalyser = null;
+let remoteMeterSource = null;
+let debugBeepPlayed = false;
+
+function stopRemoteAudioMeter() {
+    try { if (remoteMeterTimer) { clearInterval(remoteMeterTimer); remoteMeterTimer = null; } } catch {}
+    try { if (remoteMeterSource) { remoteMeterSource.disconnect(); remoteMeterSource = null; } } catch {}
+    try { if (remoteMeterAnalyser) { remoteMeterAnalyser.disconnect(); remoteMeterAnalyser = null; } } catch {}
+}
+
+function startRemoteAudioMeter(stream) {
+    try {
+        const AC = window.AudioContext || window.webkitAudioContext;
+        if (!AC) return;
+        if (!callAudioCtx || callAudioCtx.state === 'closed') callAudioCtx = new AC();
+        if (callAudioCtx.state === 'suspended') callAudioCtx.resume().catch(() => {});
+        if (callAudioCtx.state !== 'running') return;
+
+        stopRemoteAudioMeter();
+
+        remoteMeterSource = callAudioCtx.createMediaStreamSource(stream);
+        remoteMeterAnalyser = callAudioCtx.createAnalyser();
+        remoteMeterAnalyser.fftSize = 2048;
+        remoteMeterSource.connect(remoteMeterAnalyser);
+
+        const data = new Uint8Array(remoteMeterAnalyser.fftSize);
+
+        remoteMeterTimer = setInterval(() => {
+            try {
+                remoteMeterAnalyser.getByteTimeDomainData(data);
+                // RMS from 0..1
+                let sum = 0;
+                for (let i = 0; i < data.length; i++) {
+                    const v = (data[i] - 128) / 128;
+                    sum += v * v;
+                }
+                const rms = Math.sqrt(sum / data.length);
+                // логируем редко, чтобы консоль не спамилась
+                console.log('[CALL] remote rms', rms.toFixed(4));
+            } catch {}
+        }, 800);
+    } catch (e) {
+        console.warn('[CALL] meter failed', e);
+    }
+}
+
+function playDebugBeep() {
+    // Если beep не слышно — значит проблема вообще в выводе звука (site muted / mixer / output device)
+    try {
+        const AC = window.AudioContext || window.webkitAudioContext;
+        if (!AC) return;
+        if (!callAudioCtx || callAudioCtx.state === 'closed') callAudioCtx = new AC();
+        if (callAudioCtx.state === 'suspended') callAudioCtx.resume().catch(() => {});
+        if (callAudioCtx.state !== 'running') return;
+
+        const o = callAudioCtx.createOscillator();
+        const g = callAudioCtx.createGain();
+        g.gain.value = 0.15;
+        o.frequency.value = 440;
+        o.connect(g);
+        g.connect(callAudioCtx.destination);
+        o.start();
+        o.stop(callAudioCtx.currentTime + 0.12);
+    } catch (e) {
+        console.warn('[CALL] beep failed', e);
+    }
+}
 function attachRemoteAudio(stream) {
     if (!stream) return;
 
@@ -1090,6 +1162,15 @@ function attachRemoteAudio(stream) {
 
         const p = remoteAudioEl.play();
         if (p && typeof p.catch === 'function') p.catch(() => console.warn('[CALL] audio.play blocked'));
+
+        // Метр громкости (если rms ~ 0.0000 даже когда говоришь — микрофон на другой стороне реально не даёт сигнал)
+        try { startRemoteAudioMeter(stream); } catch {}
+
+        // Одноразовый тестовый beep: если его НЕ слышно, значит проблема вообще в выводе звука/сайте/микшере
+        try {
+            if (!debugBeepPlayed) { debugBeepPlayed = true; playDebugBeep(); }
+        } catch {}
+
     } catch (e) {
         console.warn('[CALL] audio element attach failed', e);
     }
@@ -1114,8 +1195,16 @@ function attachRemoteAudio(stream) {
     try {
         console.log('[CALL] audio status', {
             audioTracks: (stream.getAudioTracks() || []).length,
+            track0: (() => {
+                try {
+                    const t = (stream.getAudioTracks() || [])[0];
+                    if (!t) return null;
+                    return { enabled: t.enabled, muted: t.muted, readyState: t.readyState, id: t.id };
+                } catch { return null; }
+            })(),
             elPaused: remoteAudioEl ? remoteAudioEl.paused : null,
             elMuted: remoteAudioEl ? remoteAudioEl.muted : null,
+            elVolume: remoteAudioEl ? remoteAudioEl.volume : null,
             ctxState: callAudioCtx ? callAudioCtx.state : null
         });
     } catch {}
@@ -1140,6 +1229,12 @@ window.startCall = async (e) => {
         callPartnerId = currentChat ? currentChat.id : null;
         await ensureCallAudioUnlocked();
         localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+        try {
+            const t = localStream.getAudioTracks()[0];
+            if (t) { t.enabled = true; }
+            console.log('[CALL] local audio track (caller)', t ? { enabled: t.enabled, muted: t.muted, readyState: t.readyState, label: t.label } : null);
+        } catch {}
+
 
         const localVideo = document.getElementById('local-video');
         const localWrapper = document.getElementById('local-video-wrapper');
@@ -1210,6 +1305,12 @@ window.acceptCall = async () => {
         callPartnerId = incomingCallData ? incomingCallData.from : null;
         await ensureCallAudioUnlocked();
         localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+        try {
+            const t = localStream.getAudioTracks()[0];
+            if (t) { t.enabled = true; }
+            console.log('[CALL] local audio track (callee)', t ? { enabled: t.enabled, muted: t.muted, readyState: t.readyState, label: t.label } : null);
+        } catch {}
+
 
         const localVideo = document.getElementById('local-video');
         const localWrapper = document.getElementById('local-video-wrapper');
@@ -1405,7 +1506,10 @@ window.endCallUI = () => {
 
     // Audio cleanup
     if (remoteAudioNode) { try { remoteAudioNode.disconnect(); } catch {} remoteAudioNode = null; }
-    if (callAudioCtx) { try { callAudioCtx.close(); } catch {} callAudioCtx = null; }
+    try { stopRemoteAudioMeter(); } catch {}
+    debugBeepPlayed = false;
+    // не закрываем AudioContext, чтобы не словить автоплей-блок на следующем звонке
+    if (callAudioCtx) { try { if (callAudioCtx.state === 'running') callAudioCtx.suspend().catch(() => {}); } catch {} }
     if (remoteAudioEl) { try { remoteAudioEl.srcObject = null; remoteAudioEl.remove(); } catch {} remoteAudioEl = null; }
 
     // UI / media elements cleanup
