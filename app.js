@@ -292,9 +292,20 @@ window.handleKeyFileSelect = (e) => {
 
 window.loginWithKey = async () => {
     let rawUrl = document.getElementById('server-url').value.trim().replace(/\/$/, "");
+
+    // Если поле пустое — пытаемся использовать origin (когда клиент открыт с сервера).
+    // Если клиент открыт как file:// — origin недоступен для API, просим ввести адрес сервера.
+    if (!rawUrl) {
+        if (location.protocol.startsWith('http')) {
+            rawUrl = location.origin;
+        } else {
+            alert('Укажи адрес сервера (например: 172.26.192.1:3000)');
+            return;
+        }
+    }
+
     if (!rawUrl.startsWith('http')) rawUrl = 'http://' + rawUrl;
     serverUrl = rawUrl;
-    
     const file = document.getElementById('auth-key-file').files[0];
     if (!file) return alert("Файл не выбран");
     
