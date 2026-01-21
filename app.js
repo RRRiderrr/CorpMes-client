@@ -1148,9 +1148,12 @@ window.startCall = async (e) => {
         if (localWrapper) localWrapper.style.display = 'none';
         attachAndPlayVideo(localVideo, localStream, true);
 
+        // trickle=false: собираем ICE кандидаты внутри SDP одним пакетом.
+        // Это устраняет ситуацию, когда из-за потери/игнора candidate-сигналов RTP не стартует
+        // (в stats inBytes/outBytes остаётся 0, remote rms = 0).
         currentPeer = new SimplePeer({
             initiator: true,
-            trickle: true,
+            trickle: false,
             config: {
                 iceServers: [
                     { urls: 'stun:stun.l.google.com:19302' },
@@ -1225,9 +1228,10 @@ window.acceptCall = async () => {
         if (localWrapper) localWrapper.style.display = 'none';
         attachAndPlayVideo(localVideo, localStream, true);
 
+        // trickle=false: см. комментарий у звонящего
         currentPeer = new SimplePeer({
             initiator: false,
-            trickle: true,
+            trickle: false,
             config: {
                 iceServers: [
                     { urls: 'stun:stun.l.google.com:19302' },
