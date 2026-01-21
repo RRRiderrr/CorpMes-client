@@ -4,7 +4,7 @@
 let socket;
 let currentUser = null;
 let currentChat = null; 
-let serverUrl = localStorage.getItem('serverUrl') || '';
+let serverUrl = normalizeServerUrl(localStorage.getItem('serverUrl') || '');
 let sidebarChats = []; 
 
 // WebRTC / Звонки
@@ -22,6 +22,40 @@ let lastCallEndedAt = 0;
 let callAudioCtx = null;
 let remoteAudioNode = null;
 let remoteAudioEl = null;
+
+// --- Server URL helper (avoid accidental https:// on local IP / no-scheme input) ---
+function normalizeServerUrl(input) {
+    let u = (input || '').trim();
+    if (!u) {
+        // If app is opened from server origin - use it
+        if (typeof location !== 'undefined' && location.origin && (location.protocol === 'http:' || location.protocol === 'https:')) {
+            return location.origin;
+        }
+        return '';
+    }
+
+    // add scheme if missing
+    if (!/^https?:\/\//i.test(u)) {
+        const proto = (typeof location !== 'undefined' && location.protocol === 'https:') ? 'https://' : 'http://';
+        u = proto + u;
+    }
+
+    try {
+        const url = new URL(u);
+        const host = url.hostname;
+
+        // downgrade https -> http for localhost / private IPs to avoid ERR_CERT_AUTHORITY_INVALID
+        const isLocalhost = host === 'localhost' || host === '127.0.0.1';
+        const isPrivateIp = /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[0-1])\.)/.test(host);
+        if (url.protocol === 'https:' && (isLocalhost || isPrivateIp)) {
+            url.protocol = 'http:';
+        }
+        // strip trailing slash
+        return url.toString().replace(/\/$/, '');
+    } catch {
+        return u.replace(/\/$/, '');
+    }
+}
 
 // Редактирование / UI
 let editingMessageId = null;
@@ -292,20 +326,9 @@ window.handleKeyFileSelect = (e) => {
 
 window.loginWithKey = async () => {
     let rawUrl = document.getElementById('server-url').value.trim().replace(/\/$/, "");
-
-    // Если поле пустое — пытаемся использовать origin (когда клиент открыт с сервера).
-    // Если клиент открыт как file:// — origin недоступен для API, просим ввести адрес сервера.
-    if (!rawUrl) {
-        if (location.protocol.startsWith('http')) {
-            rawUrl = location.origin;
-        } else {
-            alert('Укажи адрес сервера (например: 172.26.192.1:3000)');
-            return;
-        }
-    }
-
     if (!rawUrl.startsWith('http')) rawUrl = 'http://' + rawUrl;
-    serverUrl = rawUrl;
+    serverUrl = normalizeServerUrl(rawUrl);
+    
     const file = document.getElementById('auth-key-file').files[0];
     if (!file) return alert("Файл не выбран");
     
@@ -1120,14 +1143,18 @@ function startPeerStats(peer, label) {
         callStatsTimer = setInterval(async () => {
             try {
                 const stats = await pc.getStats();
-                let out = null, inn = null;
+                let outA = null, inA = null, outV = null, inV = null;
                 stats.forEach(r => {
-                    if (r.type === 'outbound-rtp' && r.kind === 'audio' && !r.isRemote) out = r;
-                    if (r.type === 'inbound-rtp' && r.kind === 'audio' && !r.isRemote) inn = r;
+                    if (r.type === 'outbound-rtp' && r.kind === 'audio' && !r.isRemote) outA = r;
+                    if (r.type === 'inbound-rtp' && r.kind === 'audio' && !r.isRemote) inA = r;
+                    if (r.type === 'outbound-rtp' && r.kind === 'video' && !r.isRemote) outV = r;
+                    if (r.type === 'inbound-rtp' && r.kind === 'video' && !r.isRemote) inV = r;
                 });
-                const outBytes = out?.bytesSent ?? 0;
-                const inBytes = inn?.bytesReceived ?? 0;
-                console.log(`[CALL] stats ${label} audio outBytes=${outBytes} inBytes=${inBytes}`);
+                const aOut = outA?.bytesSent ?? 0;
+                const aIn = inA?.bytesReceived ?? 0;
+                const vOut = outV?.bytesSent ?? 0;
+                const vIn = inV?.bytesReceived ?? 0;
+                console.log(`[CALL] stats ${label} audio outBytes=${aOut} inBytes=${aIn} | video outBytes=${vOut} inBytes=${vIn} | ice=${pc.iceConnectionState} conn=${pc.connectionState}`);
             } catch (e) {
                 // ignore
             }
@@ -1135,6 +1162,19 @@ function startPeerStats(peer, label) {
     } catch (e) {
         console.warn('[CALL] stats failed', e);
     }
+}
+
+function wirePcStateLogs(peer, label) {
+    try {
+        if (!peer || !peer._pc) return;
+        const pc = peer._pc;
+        const log = (msg) => console.log(`[CALL] ${label} ${msg} | ice=${pc.iceConnectionState} gather=${pc.iceGatheringState} sig=${pc.signalingState} conn=${pc.connectionState}`);
+        pc.oniceconnectionstatechange = () => log('iceconnectionstatechange');
+        pc.onconnectionstatechange = () => log('connectionstatechange');
+        pc.onsignalingstatechange = () => log('signalingstatechange');
+        pc.onicegatheringstatechange = () => log('icegatheringstatechange');
+        log('pc created');
+    } catch {}
 }
 
 
@@ -1151,19 +1191,25 @@ window.startCall = async (e) => {
     try {
         callPartnerId = currentChat ? currentChat.id : null;
         await ensureCallAudioUnlocked();
-        localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+
+        // Try to get both mic+camera. If camera fails (no permission / no device / insecure), fall back to audio-only.
+        try {
+            localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
+        } catch (e) {
+            console.warn('[CALL] getUserMedia(video) failed, fallback to audio-only', e);
+            localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+        }
         startRmsMeter(localStream, 'local (caller)');
 
         const localVideo = document.getElementById('local-video');
         const localWrapper = document.getElementById('local-video-wrapper');
-        if (localWrapper) localWrapper.style.display = 'none';
+        const hasLocalVideo = (localStream.getVideoTracks && localStream.getVideoTracks().length > 0);
+        if (localWrapper) localWrapper.style.display = hasLocalVideo ? 'block' : 'none';
         attachAndPlayVideo(localVideo, localStream, true);
 
-        // trickle=false: собираем ICE кандидаты внутри SDP одним пакетом.
-        // Это устраняет ситуацию, когда из-за потери/игнора candidate-сигналов RTP не стартует
-        // (в stats inBytes/outBytes остаётся 0, remote rms = 0).
         currentPeer = new SimplePeer({
             initiator: true,
+            // IMPORTANT: disable trickle to avoid broken candidate forwarding on some signaling servers
             trickle: false,
             config: {
                 iceServers: [
@@ -1174,6 +1220,8 @@ window.startCall = async (e) => {
             }
         });
 
+        wirePcStateLogs(currentPeer, 'caller');
+
         // ВАЖНО: добавляем треки явно (addTrack), а не через stream: localStream
         try {
             localStream.getTracks().forEach(t => currentPeer.addTrack(t, localStream));
@@ -1183,7 +1231,11 @@ window.startCall = async (e) => {
         startPeerStats(currentPeer, 'caller');
 
 
+        let sentOffer = false;
         currentPeer.on('signal', (signal) => {
+            // with trickle:false, should fire once (offer with candidates)
+            if (sentOffer) return;
+            sentOffer = true;
             socket.emit('call_user', {
                 userToCall: currentChat.id,
                 from: currentUser.id,
@@ -1231,17 +1283,25 @@ window.acceptCall = async () => {
     try {
         callPartnerId = incomingCallData ? incomingCallData.from : null;
         await ensureCallAudioUnlocked();
-        localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+
+        // Try mic+camera first, fallback to audio-only
+        try {
+            localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
+        } catch (e) {
+            console.warn('[CALL] getUserMedia(video) failed, fallback to audio-only', e);
+            localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+        }
         startRmsMeter(localStream, 'local (callee)');
 
         const localVideo = document.getElementById('local-video');
         const localWrapper = document.getElementById('local-video-wrapper');
-        if (localWrapper) localWrapper.style.display = 'none';
+        const hasLocalVideo = (localStream.getVideoTracks && localStream.getVideoTracks().length > 0);
+        if (localWrapper) localWrapper.style.display = hasLocalVideo ? 'block' : 'none';
         attachAndPlayVideo(localVideo, localStream, true);
 
-        // trickle=false: см. комментарий у звонящего
         currentPeer = new SimplePeer({
             initiator: false,
+            // IMPORTANT: disable trickle to avoid broken candidate forwarding on some signaling servers
             trickle: false,
             config: {
                 iceServers: [
@@ -1252,6 +1312,8 @@ window.acceptCall = async () => {
             }
         });
 
+        wirePcStateLogs(currentPeer, 'callee');
+
         // ВАЖНО: добавляем треки явно (addTrack), а не через stream: localStream
         try {
             localStream.getTracks().forEach(t => currentPeer.addTrack(t, localStream));
@@ -1261,7 +1323,10 @@ window.acceptCall = async () => {
         startPeerStats(currentPeer, 'callee');
 
 
+        let sentAnswer = false;
         currentPeer.on('signal', (signal) => {
+            if (sentAnswer) return;
+            sentAnswer = true;
             socket.emit('answer_call', {
                 to: incomingCallData.from,
                 signal
@@ -1289,18 +1354,26 @@ currentPeer.on('connect', () => {
         currentPeer.on('error', (err) => console.error('[CALL] peer error (callee)', err));
         currentPeer.on('close', () => console.log('[CALL] peer close (callee)'));
 
-        // Прокидываем все сигналы, которые успели прийти до нажатия "Принять"
+        // Feed offer first, then (if any) other queued signals
         const signals = Array.isArray(incomingSignalQueue) ? incomingSignalQueue.slice() : [];
         const first = incomingCallData.signal || incomingCallData.signalData;
         if (first) {
             const hasOffer = signals.some(s => s && s.type === 'offer');
             if (!hasOffer) signals.unshift(first);
         }
-for (const s of signals) {
-            if (!s) continue;
+
+        const offers = signals.filter(s => s && s.type === 'offer');
+        const rest = signals.filter(s => !s || s.type !== 'offer');
+        for (const s of offers) {
             try { currentPeer.signal(s); } catch (e) { console.warn(e); }
-        incomingSignalQueue = [];
         }
+        setTimeout(() => {
+            for (const s of rest) {
+                if (!s) continue;
+                try { currentPeer.signal(s); } catch (e) { console.warn(e); }
+            }
+        }, 0);
+        incomingSignalQueue = [];
 
     } catch (err) {
         console.error(err);
